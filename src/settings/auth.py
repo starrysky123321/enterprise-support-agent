@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
@@ -13,6 +15,6 @@ class AuthSettings(BaseSettings):
     access_cookie_name: str = Field(default="access_token")
     refresh_cookie_name: str = Field(default="refresh_token")
     auth_cookie_secure: bool = Field(default=False)
-    auth_cookie_samesite: str = Field(default="lax")
+    auth_cookie_samesite: Literal["lax", "strict", "none"] = Field(default="lax")
     auth_cookie_domain: str | None = Field(default=None)
     auth_cookie_path: str = Field(default="/")

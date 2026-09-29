@@ -40,6 +40,9 @@ class InMemoryVectorStore(VectorStore):
     async def delete_by_doc_id(self, *, doc_id: str) -> None:
         self._items = [item for item in self._items if item[0].doc_id != doc_id]
 
+    async def list_chunks(self, *, doc_id: str) -> list[RAGChunk]:
+        return [chunk for chunk, _ in self._items if chunk.doc_id == doc_id]
+
 
 @pytest.fixture(autouse=True)
 def _restore_settings_and_cache():

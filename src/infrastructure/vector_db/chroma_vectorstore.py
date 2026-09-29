@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, Mapping, cast
 
 import chromadb
 
-from src.rag.models import RAGChunk, RetrievedChunk
+from src.rag.models import RAGChunk, RetrievedChunk, RetrievalFilter
 from src.rag.vectorstore.interface import VectorStore
 
 
@@ -36,8 +37,8 @@ class ChromaVectorStore(VectorStore):
         self._collection.upsert(
             ids=ids,
             documents=documents,
-            metadatas=metadatas,
-            embeddings=embeddings,
+            metadatas=cast(Any, metadatas),
+            embeddings=cast(Any, embeddings),
         )
 
     async def similarity_search(
@@ -46,10 +47,31 @@ class ChromaVectorStore(VectorStore):
         query_embedding: list[float],
         top_k: int,
         doc_id: str | None = None,
+        filters: RetrievalFilter | None = None,
     ) -> list[RetrievedChunk]:
-        where = {"doc_id": doc_id} if doc_id else None
-        response = self._collection.query(
-            query_embeddings=[query_embedding],
+        conditions: list[dict] = []
+        if doc_id:
+            conditions.append({"doc_id": doc_id})
+        if filters:
+            if filters.allowed_doc_ids:
+                conditions.append({"doc_id": {"$in": list(filters.allowed_doc_ids)}})
+            if filters.product_name:
+                conditions.append({"product_name": filters.product_name})
+            if filters.product_version:
+                conditions.append({"product_version": filters.product_version})
+            if filters.document_types:
+                conditions.append({"document_type": {"$in": list(filters.document_types)}})
+            if filters.knowledge_space_id:
+                conditions.append({"knowledge_space_id": filters.knowledge_space_id})
+            if filters.department:
+                conditions.append({"department": filters.department})
+        where = None
+        if len(conditions) == 1:
+            where = conditions[0]
+        elif conditions:
+            where = {"$and": conditions}
+        response: Any = self._collection.query(
+            query_embeddings=cast(Any, [query_embedding]),
             n_results=top_k,
             include=["documents", "metadatas", "distances"],
             where=where,
@@ -70,6 +92,14 @@ class ChromaVectorStore(VectorStore):
                     text=str(document),
                     score=score,
                     page_number=self._parse_page_number(metadata or {}),
+                    document_type=str((metadata or {}).get("document_type", "manual")),
+                    product_name=self._parse_optional_string(metadata or {}, "product_name"),
+                    product_version=self._parse_optional_string(metadata or {}, "product_version"),
+                    department=self._parse_optional_string(metadata or {}, "department"),
+                    knowledge_space_id=self._parse_optional_string(metadata or {}, "knowledge_space_id"),
+                    visibility=str((metadata or {}).get("visibility", "private")),
+                    retrieval_sources=("dense",),
+                    raw_scores={"dense": score},
                 )
             )
         return results
@@ -78,7 +108,7 @@ class ChromaVectorStore(VectorStore):
         if not doc_id:
             return []
 
-        response = self._collection.get(
+        response: Any = self._collection.get(
             where={"doc_id": doc_id},
             include=["documents", "metadatas"],
         )
@@ -99,6 +129,12 @@ class ChromaVectorStore(VectorStore):
                     chunking_strategy=self._parse_optional_string(metadata or {}, "chunking_strategy"),
                     chunk_size=self._parse_optional_int((metadata or {}).get("chunk_size")),
                     chunk_overlap=self._parse_optional_int((metadata or {}).get("chunk_overlap")),
+                    document_type=str((metadata or {}).get("document_type", "manual")),
+                    product_name=self._parse_optional_string(metadata or {}, "product_name"),
+                    product_version=self._parse_optional_string(metadata or {}, "product_version"),
+                    department=self._parse_optional_string(metadata or {}, "department"),
+                    knowledge_space_id=self._parse_optional_string(metadata or {}, "knowledge_space_id"),
+                    visibility=str((metadata or {}).get("visibility", "private")),
                 )
             )
 
@@ -125,15 +161,21 @@ class ChromaVectorStore(VectorStore):
             metadata["chunk_size"] = int(chunk.chunk_size)
         if chunk.chunk_overlap is not None:
             metadata["chunk_overlap"] = int(chunk.chunk_overlap)
+        metadata["document_type"] = chunk.document_type
+        metadata["visibility"] = chunk.visibility
+        for key in ("product_name", "product_version", "department", "knowledge_space_id"):
+            value = getattr(chunk, key)
+            if value is not None:
+                metadata[key] = value
         return metadata
 
     @staticmethod
-    def _parse_page_number(metadata: dict[str, str | int]) -> int | None:
+    def _parse_page_number(metadata: Mapping[str, Any]) -> int | None:
         raw = metadata.get("page_number")
         return ChromaVectorStore._parse_optional_int(raw)
 
     @staticmethod
-    def _parse_optional_int(raw: str | int | None) -> int | None:
+    def _parse_optional_int(raw: Any) -> int | None:
         if raw is None:
             return None
         try:
@@ -142,7 +184,7 @@ class ChromaVectorStore(VectorStore):
             return None
 
     @staticmethod
-    def _parse_optional_string(metadata: dict[str, str | int], key: str) -> str | None:
+    def _parse_optional_string(metadata: Mapping[str, Any], key: str) -> str | None:
         raw = metadata.get(key)
         if raw is None:
             return None

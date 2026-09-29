@@ -10,6 +10,7 @@ from uuid import uuid4
 from src.agents.ask_pipeline import AgentAskPipeline
 from src.agents.service import AgentCitation, AgentResult
 from src.shared.tracing import TRACE_LOGGER_NAME
+from src.settings.config import settings
 
 
 @dataclass
@@ -79,6 +80,8 @@ class _Cache:
         self.enabled = True
         self.lookup_calls = 0
         self.store_calls = 0
+        self.last_lookup_kwargs = None
+        self.last_store_kwargs = None
 
     @staticmethod
     def normalize_question(question: str) -> str:
@@ -86,10 +89,12 @@ class _Cache:
 
     async def lookup(self, **kwargs):
         self.lookup_calls += 1
+        self.last_lookup_kwargs = kwargs
         return None
 
     async def store(self, **kwargs):
         self.store_calls += 1
+        self.last_store_kwargs = kwargs
 
 
 def _trace_events(caplog) -> list[dict]:
@@ -164,8 +169,35 @@ def test_ask_pipeline_emits_traces_without_chunk_text(caplog):
         "ask.cache.store.succeeded",
     ]
     assert all(event["request_id"] == "req-pipeline" for event in events)
-    assert events[1]["question"] == "q"
-    assert events[1]["refined_query"] == "refined q"
+    assert "question" not in events[1]
+    assert "refined_query" not in events[1]
     joined_logs = "\n".join(record.message for record in caplog.records)
     assert "\"snippet\"" not in joined_logs
     assert "\"answer\"" not in joined_logs
+
+
+def test_ask_pipeline_uses_permission_partitioned_cache_namespace():
+    cache = _Cache()
+    pipeline = AgentAskPipeline(
+        agent_service=_Agent(), llm=_LLM(), query_refinement_service=_Refiner(),
+        embedding_provider=_Embed(), semantic_cache_service=cache,
+        documents_repository=_DocsRepo(),
+    )
+    original_pipeline_version = settings.pipeline_version
+    owner_id = uuid4()
+    try:
+        asyncio.run(pipeline.ask(
+            owner_user_id=owner_id, question="q", doc_id="doc-1", use_cache=True,
+        ))
+        first_namespace = cache.last_lookup_kwargs["model_name"]
+        assert first_namespace.startswith("model-x:")
+        assert len(first_namespace.rsplit(":", 1)[1]) == 64
+
+        settings.pipeline_version = "hybrid-agentic-v2"
+        asyncio.run(pipeline.ask(
+            owner_user_id=owner_id, question="q", doc_id="doc-1", use_cache=True,
+        ))
+        second_namespace = cache.last_lookup_kwargs["model_name"]
+        assert second_namespace != first_namespace
+    finally:
+        settings.pipeline_version = original_pipeline_version

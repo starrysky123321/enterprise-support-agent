@@ -83,7 +83,7 @@ class LLM(ABC):
         """Return a single full completion."""
 
     @abstractmethod
-    async def stream(
+    def stream(
         self,
         messages: list[ChatMessage],
         *,

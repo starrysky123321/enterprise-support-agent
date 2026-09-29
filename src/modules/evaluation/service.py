@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Callable, cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -530,24 +530,32 @@ class RetrievalEvaluationService:
         ]
         await repository.mark_run_completed(
             run=run,
-            hit_at_k_avg=aggregate_metric_average(case.get("hit_at_k") for case in aggregate_cases)
+            hit_at_k_avg=aggregate_metric_average(
+                cast(float | int | None, case.get("hit_at_k")) for case in aggregate_cases
+            )
             or 0.0,
             recall_at_k_avg=aggregate_metric_average(
-                case.get("recall_at_k") for case in aggregate_cases
+                cast(float | int | None, case.get("recall_at_k"))
+                for case in aggregate_cases
             )
             or 0.0,
             precision_at_k_avg=aggregate_metric_average(
-                case.get("precision_at_k") for case in aggregate_cases
+                cast(float | int | None, case.get("precision_at_k"))
+                for case in aggregate_cases
             )
             or 0.0,
-            mrr_avg=aggregate_metric_average(case.get("mrr") for case in aggregate_cases)
+            mrr_avg=aggregate_metric_average(
+                cast(float | int | None, case.get("mrr")) for case in aggregate_cases
+            )
             or 0.0,
             keyword_coverage_avg=aggregate_metric_average(
-                case.get("keyword_coverage") for case in aggregate_cases
+                cast(float | int | None, case.get("keyword_coverage"))
+                for case in aggregate_cases
             )
             or 0.0,
             context_relevance_score_avg=aggregate_metric_average(
-                case.get("context_relevance_score") for case in aggregate_cases
+                cast(float | int | None, case.get("context_relevance_score"))
+                for case in aggregate_cases
             ),
             grouped_summary={
                 "category": grouped_metric_summary(

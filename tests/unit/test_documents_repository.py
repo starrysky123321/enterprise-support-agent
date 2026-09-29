@@ -1,5 +1,4 @@
 import asyncio
-import tempfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,8 +9,8 @@ from src.modules.documents.repository import DocumentsRepository
 from src.modules.users.models import User
 
 
-def test_documents_repository_ownership_and_soft_delete():
-    temp_db = Path(tempfile.mkdtemp(prefix="docs-repo-", dir=".")) / "test.db"
+def test_documents_repository_ownership_and_soft_delete(tmp_path: Path):
+    temp_db = tmp_path / "test.db"
     database_url = f"sqlite+aiosqlite:///{temp_db.as_posix()}"
 
     async def _run():

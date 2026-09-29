@@ -5,8 +5,10 @@ from typing import Any
 
 from src.rag.embeddings.interface import EmbeddingProvider
 
+_HuggingFaceEmbeddings: Any
 try:
-    from langchain_huggingface import HuggingFaceEmbeddings as _HuggingFaceEmbeddings
+    from langchain_huggingface import HuggingFaceEmbeddings
+    _HuggingFaceEmbeddings = HuggingFaceEmbeddings
 except ImportError:
     _HuggingFaceEmbeddings = None
 

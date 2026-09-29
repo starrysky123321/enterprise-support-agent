@@ -34,6 +34,7 @@ class _SuccessfulPipeline:
         session_id: str | None = None,
         use_cache: bool = True,
         request_id: str | None = None,
+        current_user=None,
     ) -> AgentAskPipelineResult:
         self.request_id = request_id
         return AgentAskPipelineResult(
@@ -57,6 +58,7 @@ class _FailingPipeline:
         session_id: str | None = None,
         use_cache: bool = True,
         request_id: str | None = None,
+        current_user=None,
     ) -> AgentAskPipelineResult:
         raise RuntimeError("boom")
 

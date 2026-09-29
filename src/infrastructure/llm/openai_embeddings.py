@@ -13,12 +13,16 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         model: str,
         base_url: str | None = None,
         organization: str | None = None,
+        timeout_s: float = 30.0,
+        max_retries: int = 2,
     ) -> None:
         self._model = model
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
             organization=organization,
+            timeout=timeout_s,
+            max_retries=max_retries,
         )
 
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:

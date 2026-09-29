@@ -248,7 +248,7 @@ class EvaluationRepository:
         )
         result = await self._session.execute(stmt)
         await self._session.flush()
-        return bool(result.rowcount)
+        return bool(getattr(result, "rowcount", 0))
 
     async def commit(self) -> None:
         await self._session.commit()

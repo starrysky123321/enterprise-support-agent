@@ -4,6 +4,7 @@ from src.api.v1.schemas import LLMHealthResponse, ToolsHealthResponse
 from src.api.v1.dependencies import LLMDep, ToolRegistryDep
 from src.shared.interfaces.llm import ChatMessage, GenerationConfig, MessageRole
 from src.shared.interfaces.tool import ToolContext
+from src.settings.config import settings
 
 
 
@@ -26,14 +27,14 @@ async def llm_health(llm: LLMDep):
         return LLMHealthResponse(
             status="ok",
             llm_ok=True,
-            provider="openai",
+            provider=settings.llm_provider,
             model=llm.model_name,
         )
     except Exception as exc:
         return LLMHealthResponse(
             status="degraded",
             llm_ok=False,
-            provider="openai",
+            provider=settings.llm_provider,
             model=llm.model_name,
             detail=str(exc),
         )

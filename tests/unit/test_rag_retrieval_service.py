@@ -6,7 +6,7 @@ import pytest
 
 from src.rag.models import RetrievedChunk
 from src.rag.pipeline.services import RAGRetrievalService
-from src.shared.tracing import TRACE_LOGGER_NAME, TraceContext
+from src.shared.tracing import TRACE_LOGGER_NAME, TraceContext, chunk_metadata
 
 
 class FakeEmbeddingProvider:
@@ -65,6 +65,18 @@ def _trace_events(caplog) -> list[dict]:
         for record in caplog.records
         if record.name == TRACE_LOGGER_NAME
     ]
+
+
+def test_chunk_trace_metadata_records_retrieval_route_without_body():
+    chunk = RetrievedChunk(
+        "doc-1", "chunk-1", "ticket.md", "sensitive incident body", 0.8,
+        retrieval_sources=("bm25", "dense"),
+    )
+
+    metadata = chunk_metadata([chunk])[0]
+
+    assert metadata["retrieval_sources"] == ("bm25", "dense")
+    assert "text" not in metadata
 
 
 def test_retrieval_uses_prefetch_and_reranks_to_final_top_k(caplog):

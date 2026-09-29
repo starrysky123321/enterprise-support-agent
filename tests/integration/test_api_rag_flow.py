@@ -13,6 +13,7 @@ from main import app
 from src.agents import AgentCitation, AgentResult, AgentService
 from src.api.v1 import dependencies as deps
 from src.modules.documents.dependencies import get_documents_repository
+from src.modules.access.dependencies import get_permission_service
 from src.modules.users.dependencies import active_user
 from src.rag.models import RetrievedChunk
 from src.rag.pipeline import IngestionResult, PDFIngestionResult
@@ -64,7 +65,11 @@ class FakeIngestionService:
     def __init__(self, store: InMemoryRAGStore) -> None:
         self._store = store
 
-    async def ingest_text(self, *, text: str, source: str | None = None, doc_id: str | None = None):
+    async def ingest_text(
+        self, *, text: str, source: str | None = None,
+        doc_id: str | None = None, chunking_strategy: str | None = None,
+        metadata: dict | None = None,
+    ):
         resolved_doc_id = doc_id or f"doc-{len(self._store.items) + 1}"
         self._store.items.append(
             {
@@ -86,7 +91,11 @@ class FakeIngestionService:
             chunk_overlap=120,
         )
 
-    async def ingest_pdf(self, *, pdf_bytes: bytes, source: str | None = None, doc_id: str | None = None):
+    async def ingest_pdf(
+        self, *, pdf_bytes: bytes, source: str | None = None,
+        doc_id: str | None = None, chunking_strategy: str | None = None,
+        metadata: dict | None = None,
+    ):
         if not pdf_bytes:
             raise ValueError("Uploaded PDF is empty.")
         resolved_doc_id = doc_id or f"doc-{len(self._store.items) + 1}"
@@ -354,6 +363,16 @@ class FakeDocument:
     source: str | None
     created_at: datetime
     updated_at: datetime
+    chunking_strategy: str | None = None
+    chunk_size: int | None = None
+    chunk_overlap: int | None = None
+    document_type: str = "manual"
+    product_name: str | None = None
+    product_version: str | None = None
+    department: str | None = None
+    knowledge_space_id: str | None = None
+    visibility: str = "private"
+    ingestion_status: str = "completed"
     last_indexed_at: datetime | None = None
     deleted_at: datetime | None = None
 
@@ -362,7 +381,13 @@ class FakeDocumentsRepository:
     def __init__(self) -> None:
         self._items: dict[str, FakeDocument] = {}
 
-    async def create_document(self, *, owner_user_id: UUID, doc_id: str, source: str | None):
+    async def create_document(
+        self, *, owner_user_id: UUID, doc_id: str, source: str | None,
+        document_type: str = "manual", product_name: str | None = None,
+        product_version: str | None = None, department: str | None = None,
+        knowledge_space_id: str | None = None, visibility: str = "private",
+        **kwargs,
+    ):
         now = datetime.now(timezone.utc)
         doc = FakeDocument(
             id=doc_id,
@@ -370,6 +395,12 @@ class FakeDocumentsRepository:
             source=source,
             created_at=now,
             updated_at=now,
+            document_type=document_type,
+            product_name=product_name,
+            product_version=product_version,
+            department=department,
+            knowledge_space_id=knowledge_space_id,
+            visibility=visibility,
             last_indexed_at=None,
             deleted_at=None,
         )
@@ -409,6 +440,13 @@ class FakeDocumentsRepository:
             item.updated_at = now
         return item
 
+    async def soft_delete_document(self, *, document: FakeDocument):
+        if document.deleted_at is None:
+            now = datetime.now(timezone.utc)
+            document.deleted_at = now
+            document.updated_at = now
+        return document
+
     async def doc_id_exists(self, *, doc_id: str, include_deleted: bool = True) -> bool:
         item = self._items.get(doc_id)
         if item is None:
@@ -423,6 +461,9 @@ class FakeDocumentsRepository:
         owner_user_id: UUID,
         doc_id: str,
         indexed_at: datetime | None = None,
+        chunking_strategy: str | None = None,
+        chunk_size: int | None = None,
+        chunk_overlap: int | None = None,
     ):
         item = await self.get_owned_document(
             owner_user_id=owner_user_id,
@@ -434,6 +475,9 @@ class FakeDocumentsRepository:
         now = indexed_at or datetime.now(timezone.utc)
         item.last_indexed_at = now
         item.updated_at = now
+        item.chunking_strategy = chunking_strategy
+        item.chunk_size = chunk_size
+        item.chunk_overlap = chunk_overlap
         return item
 
     async def commit(self) -> None:
@@ -441,6 +485,27 @@ class FakeDocumentsRepository:
 
     async def rollback(self) -> None:
         return None
+
+
+class FakePermissionService:
+    def __init__(self, repository: FakeDocumentsRepository) -> None:
+        self._repository = repository
+
+    async def can_upload_to_scope(self, **kwargs) -> bool:
+        return True
+
+    async def accessible_document(self, *, user: FakeUser, doc_id: str):
+        return await self._repository.get_owned_document(
+            owner_user_id=user.id, doc_id=doc_id, include_deleted=False,
+        )
+
+    async def list_accessible_documents(self, *, user: FakeUser, limit: int, offset: int):
+        return await self._repository.list_owned_documents(
+            owner_user_id=user.id, limit=limit, offset=offset,
+        )
+
+    async def can_manage_document(self, **kwargs) -> bool:
+        return True
 
 
 def _build_client(
@@ -452,6 +517,7 @@ def _build_client(
     ingestion_service = FakeIngestionService(store)
     retrieval_service = retrieval_service or FakeRetrievalService(store)
     docs_repo = FakeDocumentsRepository()
+    permission_service = FakePermissionService(docs_repo)
     owner = FakeUser(id=uuid4())
     embedding_provider = FakeEmbeddingProvider()
     query_refinement_service = FakeQueryRefinementService()
@@ -472,6 +538,7 @@ def _build_client(
     app.dependency_overrides[deps.get_semantic_cache_service] = lambda: semantic_cache_service
     app.dependency_overrides[deps.get_vector_store] = lambda: FakeVectorStore(store)
     app.dependency_overrides[get_documents_repository] = lambda: docs_repo
+    app.dependency_overrides[get_permission_service] = lambda: permission_service
     app.dependency_overrides[active_user] = lambda: owner
     app.dependency_overrides[deps.get_agent_service] = lambda: AgentService(
         llm=llm,
@@ -784,4 +851,3 @@ def test_agent_ask_returns_server_error_when_reranker_retry_is_exhausted():
         assert response.status_code == 500
     finally:
         app.dependency_overrides.clear()
-

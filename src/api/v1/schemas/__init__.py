@@ -1,4 +1,9 @@
-from src.api.v1.schemas.agent import AgentAskRequest, AgentAskResponse, AgentCitation
+from src.api.v1.schemas.agent import (
+    AgentAskRequest,
+    AgentAskResponse,
+    AgentCitation,
+    AgenticAskRequest,
+)
 from src.api.v1.schemas.documents import (
     DocumentChunkItem,
     DocumentChunkListResponse,
@@ -27,12 +32,14 @@ from src.api.v1.schemas.rag import (
     RAGIngestPDFResponse,
     RAGIngestTextRequest,
     RAGIngestTextResponse,
+    RAGRetrieveRequest,
 )
 
 __all__ = [
     "AgentAskRequest",
     "AgentAskResponse",
     "AgentCitation",
+    "AgenticAskRequest",
     "DocumentChunkItem",
     "DocumentChunkListResponse",
     "DocumentChunkSummary",
@@ -56,5 +63,6 @@ __all__ = [
     "RAGIngestPDFResponse",
     "RAGIngestTextRequest",
     "RAGIngestTextResponse",
+    "RAGRetrieveRequest",
     "ToolsHealthResponse",
 ]

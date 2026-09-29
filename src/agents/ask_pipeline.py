@@ -5,6 +5,10 @@ from uuid import UUID
 
 from src.agents.cache_policy import is_cacheable_rag_answer, is_no_answer_fallback
 from src.agents.service import AgentService
+from src.agents.cache_key import build_permission_cache_key
+from src.modules.access.service import PermissionService
+from src.modules.users.models import User
+from src.settings.config import settings
 from src.modules.documents.repository import DocumentsRepository
 from src.modules.semantic_cache.service import SemanticCacheService
 from src.rag.embeddings import EmbeddingProvider
@@ -39,6 +43,7 @@ class AgentAskPipeline:
         embedding_provider: EmbeddingProvider,
         semantic_cache_service: SemanticCacheService,
         documents_repository: DocumentsRepository,
+        permission_service: PermissionService | None = None,
     ) -> None:
         self._agent_service = agent_service
         self._llm = llm
@@ -46,6 +51,7 @@ class AgentAskPipeline:
         self._embedding_provider = embedding_provider
         self._semantic_cache_service = semantic_cache_service
         self._documents_repository = documents_repository
+        self._permission_service = permission_service
 
     async def ask(
         self,
@@ -56,6 +62,7 @@ class AgentAskPipeline:
         session_id: str | None = None,
         use_cache: bool = True,
         request_id: str | None = None,
+        current_user: User | None = None,
     ) -> AgentAskPipelineResult:
         trace_context = TraceContext(
             request_id=request_id or "unknown",
@@ -63,11 +70,14 @@ class AgentAskPipeline:
             owner_user_id=str(owner_user_id),
             session_id=session_id,
         )
-        document = await self._documents_repository.get_owned_document(
-            owner_user_id=owner_user_id,
-            doc_id=doc_id,
-            include_deleted=False,
-        )
+        if current_user is not None and self._permission_service is not None:
+            document = await self._permission_service.accessible_document(
+                user=current_user, doc_id=doc_id,
+            )
+        else:
+            document = await self._documents_repository.get_owned_document(
+                owner_user_id=owner_user_id, doc_id=doc_id, include_deleted=False,
+            )
         if document is None:
             raise DocumentNotFoundError("Document not found.")
         trace_event(
@@ -89,6 +99,22 @@ class AgentAskPipeline:
             refined_query=refined_query,
         )
         normalized_question = self._semantic_cache_service.normalize_question(refined_query)
+        permission_key = build_permission_cache_key(
+            user_id=str(owner_user_id), permission_scope=[doc_id],
+            knowledge_space_id=getattr(document, "knowledge_space_id", None),
+            filters={
+                "doc_id": doc_id,
+                "product_name": getattr(document, "product_name", None),
+                "product_version": getattr(document, "product_version", None),
+                "document_type": getattr(document, "document_type", None),
+                "department": getattr(document, "department", None),
+                "visibility": getattr(document, "visibility", "private"),
+            },
+            model_version=self._llm.model_name,
+            prompt_version=settings.prompt_version,
+            pipeline_version=settings.pipeline_version,
+        )
+        cache_model_name = f"{self._llm.model_name}:{permission_key}"
         query_embedding: list[float] | None = None
 
         should_use_cache = (
@@ -96,7 +122,8 @@ class AgentAskPipeline:
             and self._semantic_cache_service.enabled
             and document.last_indexed_at is not None
         )
-        if should_use_cache:
+        doc_version = document.last_indexed_at
+        if should_use_cache and doc_version is not None:
             trace_event(
                 "ask.cache.lookup.started",
                 trace_context=trace_context,
@@ -110,8 +137,8 @@ class AgentAskPipeline:
                 cache_hit = await self._semantic_cache_service.lookup(
                     owner_user_id=owner_user_id,
                     doc_id=doc_id,
-                    doc_version=document.last_indexed_at,
-                    model_name=self._llm.model_name,
+                    doc_version=doc_version,
+                    model_name=cache_model_name,
                     query_embedding=query_embedding,
                 )
                 if cache_hit is not None:
@@ -179,7 +206,7 @@ class AgentAskPipeline:
             no_answer_fallback=is_no_answer_fallback(result.answer),
         )
 
-        if should_use_cache:
+        if should_use_cache and doc_version is not None:
             is_rag_backed = is_cacheable_rag_answer(
                 tools_used=result.tools_used,
                 citations=citations,
@@ -194,8 +221,8 @@ class AgentAskPipeline:
                     await self._semantic_cache_service.store(
                         owner_user_id=owner_user_id,
                         doc_id=doc_id,
-                        doc_version=document.last_indexed_at,
-                        model_name=self._llm.model_name,
+                        doc_version=doc_version,
+                        model_name=cache_model_name,
                         question_normalized=normalized_question,
                         question_embedding=query_embedding,
                         answer=result.answer,
@@ -236,4 +263,3 @@ class AgentAskPipeline:
             tools_used=result.tools_used,
             citations=citations,
         )
-

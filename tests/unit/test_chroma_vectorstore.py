@@ -1,6 +1,6 @@
 import asyncio
 import shutil
-import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -10,8 +10,8 @@ from src.infrastructure.vector_db.chroma_vectorstore import ChromaVectorStore
 from src.rag.models import RAGChunk
 
 
-def test_chroma_vectorstore_upsert_and_search():
-    persist_dir = tempfile.mkdtemp(prefix="chroma-store-", dir=".")
+def test_chroma_vectorstore_upsert_and_search(tmp_path: Path):
+    persist_dir = str(tmp_path / "chroma")
     try:
         async def _run():
             store = ChromaVectorStore(
@@ -48,8 +48,8 @@ def test_chroma_vectorstore_upsert_and_search():
         shutil.rmtree(persist_dir, ignore_errors=True)
 
 
-def test_chroma_vectorstore_filters_by_doc_id():
-    persist_dir = tempfile.mkdtemp(prefix="chroma-store-", dir=".")
+def test_chroma_vectorstore_filters_by_doc_id(tmp_path: Path):
+    persist_dir = str(tmp_path / "chroma")
     try:
         async def _run():
             store = ChromaVectorStore(
@@ -81,8 +81,8 @@ def test_chroma_vectorstore_filters_by_doc_id():
         shutil.rmtree(persist_dir, ignore_errors=True)
 
 
-def test_chroma_vectorstore_allows_distinct_collections_per_embedding_mode():
-    persist_dir = tempfile.mkdtemp(prefix="chroma-store-", dir=".")
+def test_chroma_vectorstore_allows_distinct_collections_per_embedding_mode(tmp_path: Path):
+    persist_dir = str(tmp_path / "chroma")
     try:
         async def _run():
             openai_store = ChromaVectorStore(
@@ -124,8 +124,8 @@ def test_chroma_vectorstore_allows_distinct_collections_per_embedding_mode():
         shutil.rmtree(persist_dir, ignore_errors=True)
 
 
-def test_chroma_vectorstore_delete_by_doc_id():
-    persist_dir = tempfile.mkdtemp(prefix="chroma-store-", dir=".")
+def test_chroma_vectorstore_delete_by_doc_id(tmp_path: Path):
+    persist_dir = str(tmp_path / "chroma")
     try:
         async def _run():
             store = ChromaVectorStore(
@@ -147,8 +147,8 @@ def test_chroma_vectorstore_delete_by_doc_id():
         shutil.rmtree(persist_dir, ignore_errors=True)
 
 
-def test_chroma_vectorstore_list_chunks_returns_stable_chunk_order():
-    persist_dir = tempfile.mkdtemp(prefix="chroma-store-", dir=".")
+def test_chroma_vectorstore_list_chunks_returns_stable_chunk_order(tmp_path: Path):
+    persist_dir = str(tmp_path / "chroma")
     try:
         async def _run():
             store = ChromaVectorStore(

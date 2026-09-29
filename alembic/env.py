@@ -12,6 +12,8 @@ import src.modules.documents.models  # noqa: F401
 import src.modules.evaluation.models  # noqa: F401
 import src.modules.semantic_cache.models  # noqa: F401
 import src.modules.users.models  # noqa: F401
+import src.modules.ingestion.models  # noqa: F401
+import src.modules.access.models  # noqa: F401
 from src.infrastructure.database import Base
 from src.settings.config import settings
 

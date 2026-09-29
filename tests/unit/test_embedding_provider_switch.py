@@ -1,6 +1,5 @@
 import shutil
 import sys
-import tempfile
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +19,8 @@ def _restore_settings_and_cache():
         "openai_key",
         "embedding_model",
         "embedding_base_url",
+        "external_request_timeout_s",
+        "external_max_retries",
     ]
     snapshot = {field: getattr(settings, field) for field in fields}
     deps.get_embedding_provider.cache_clear()
@@ -84,7 +85,7 @@ def test_resolved_rag_collection_name_for_openai():
 
     collection_name = settings.resolved_rag_collection_name()
 
-    assert collection_name == "agentic_rag_docs__openai__text_embedding_3_small"
+    assert collection_name == "enterprise_support_docs__openai__text_embedding_3_small"
 
 
 def test_resolved_rag_collection_name_for_huggingface():
@@ -96,7 +97,7 @@ def test_resolved_rag_collection_name_for_huggingface():
 
     assert (
         collection_name
-        == "agentic_rag_docs__huggingface__sentence_transformers_all_minilm_l6_v2"
+        == "enterprise_support_docs__huggingface__sentence_transformers_all_minilm_l6_v2"
     )
 
 
@@ -119,11 +120,11 @@ def test_resolved_rag_collection_name_sanitizes_model_name():
 
     assert (
         collection_name
-        == "agentic_rag_docs__huggingface__sentence_transformers_all_minilm_l6_v2"
+        == "enterprise_support_docs__huggingface__sentence_transformers_all_minilm_l6_v2"
     )
 
 
-def test_get_vector_store_uses_resolved_collection_name_and_cache_clear(monkeypatch):
+def test_get_vector_store_uses_resolved_collection_name_and_cache_clear(monkeypatch, tmp_path):
     created: list[tuple[str, str]] = []
 
     class FakeStore:
@@ -138,7 +139,7 @@ def test_get_vector_store_uses_resolved_collection_name_and_cache_clear(monkeypa
         SimpleNamespace(ChromaVectorStore=FakeStore),
     )
 
-    workspace_tmp = tempfile.mkdtemp(prefix="vector-store-", dir=".")
+    workspace_tmp = str(tmp_path / "vector-store")
     try:
         settings.chroma_persist_dir = workspace_tmp
         settings.rag_collection_name = None
@@ -152,16 +153,16 @@ def test_get_vector_store_uses_resolved_collection_name_and_cache_clear(monkeypa
         deps.get_vector_store.cache_clear()
         second_store = deps.get_vector_store()
 
-        assert first_store.collection_name == "agentic_rag_docs__openai__text_embedding_3_small"
+        assert first_store.collection_name == "enterprise_support_docs__openai__text_embedding_3_small"
         assert (
             second_store.collection_name
-            == "agentic_rag_docs__huggingface__sentence_transformers_all_minilm_l6_v2"
+            == "enterprise_support_docs__huggingface__sentence_transformers_all_minilm_l6_v2"
         )
         assert created == [
-            (workspace_tmp, "agentic_rag_docs__openai__text_embedding_3_small"),
+                (workspace_tmp, "enterprise_support_docs__openai__text_embedding_3_small"),
             (
                 workspace_tmp,
-                "agentic_rag_docs__huggingface__sentence_transformers_all_minilm_l6_v2",
+                    "enterprise_support_docs__huggingface__sentence_transformers_all_minilm_l6_v2",
             ),
         ]
     finally:

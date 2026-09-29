@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -125,10 +124,10 @@ class FakeDocumentsRepository:
         return FakeDoc(id=doc_id, owner_user_id=owner_user_id, source="policy")
 
 
-def test_retrieval_evaluation_api_flow_and_judge_disabled():
-    temp_db = Path(tempfile.mkdtemp(prefix="eval-api-", dir=".")) / "test.db"
+def test_retrieval_evaluation_api_flow_and_judge_disabled(tmp_path: Path):
+    temp_db = tmp_path / "test.db"
     database_url = f"sqlite+aiosqlite:///{temp_db.as_posix()}"
-    dataset_dir = Path(tempfile.mkdtemp(prefix="eval-api-data-", dir="."))
+    dataset_dir = tmp_path / "datasets"
     owner_id = uuid4()
 
     async def _seed(session_factory):
@@ -222,10 +221,10 @@ async def _prepare_db(engine, session_factory, seed_fn):
     await seed_fn(session_factory)
 
 
-def test_retrieval_evaluation_rerun_failed_cases_api_flow():
-    temp_db = Path(tempfile.mkdtemp(prefix="eval-rerun-api-", dir=".")) / "test.db"
+def test_retrieval_evaluation_rerun_failed_cases_api_flow(tmp_path: Path):
+    temp_db = tmp_path / "test.db"
     database_url = f"sqlite+aiosqlite:///{temp_db.as_posix()}"
-    dataset_dir = Path(tempfile.mkdtemp(prefix="eval-rerun-api-data-", dir="."))
+    dataset_dir = tmp_path / "datasets"
     owner_id = uuid4()
 
     async def _seed(session_factory):

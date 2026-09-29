@@ -1,4 +1,9 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+DocumentType = Literal["manual", "api_doc", "sop", "ticket", "release_note", "faq", "config_doc"]
+Visibility = Literal["private", "department", "workspace"]
 
 
 class RAGIngestTextRequest(BaseModel):
@@ -15,6 +20,12 @@ class RAGIngestTextRequest(BaseModel):
         default=None,
         description="Optional document id; generated automatically if omitted.",
     )
+    document_type: DocumentType = "manual"
+    product_name: str | None = Field(default=None, max_length=255)
+    product_version: str | None = Field(default=None, max_length=128)
+    department: str | None = Field(default=None, max_length=255)
+    knowledge_space_id: str | None = Field(default=None, max_length=255)
+    visibility: Visibility = "private"
 
 
 class RAGIngestTextResponse(BaseModel):
@@ -37,3 +48,12 @@ class RAGIngestPDFResponse(BaseModel):
         default_factory=list,
         description="Extraction warnings encountered during partial ingestion.",
     )
+
+
+class RAGRetrieveRequest(BaseModel):
+    query: str = Field(min_length=1)
+    product_name: str | None = None
+    product_version: str | None = None
+    document_types: list[DocumentType] = Field(default_factory=list)
+    knowledge_space_id: str | None = None
+    top_k: int = Field(default=8, ge=1, le=50)

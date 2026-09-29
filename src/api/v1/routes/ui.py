@@ -13,9 +13,9 @@ templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[4] / 
 @router.get("/login-ui", response_class=HTMLResponse, include_in_schema=False)
 async def login_ui(request: Request):
     return templates.TemplateResponse(
+        request,
         "login_ui.html",
         {
-            "request": request,
         },
     )
 
@@ -23,9 +23,9 @@ async def login_ui(request: Request):
 @router.get("/ask-ui", response_class=HTMLResponse, include_in_schema=False)
 async def ask_ui(request: Request):
     return templates.TemplateResponse(
+        request,
         "ask_ui.html",
         {
-            "request": request,
         },
     )
 
@@ -33,9 +33,9 @@ async def ask_ui(request: Request):
 @router.get("/documents-ui", response_class=HTMLResponse, include_in_schema=False)
 async def documents_ui(request: Request):
     return templates.TemplateResponse(
+        request,
         "documents_ui.html",
         {
-            "request": request,
             "chunking_strategies": get_chunking_registry().names(),
             "default_chunking_strategy": settings.default_chunking_strategy,
         },
@@ -45,9 +45,9 @@ async def documents_ui(request: Request):
 @router.get("/documents/{doc_id}/chunks-ui", response_class=HTMLResponse, include_in_schema=False)
 async def document_chunks_ui(request: Request, doc_id: str):
     return templates.TemplateResponse(
+        request,
         "document_chunks_ui.html",
         {
-            "request": request,
             "doc_id": doc_id,
         },
     )
@@ -56,9 +56,9 @@ async def document_chunks_ui(request: Request, doc_id: str):
 @router.get("/evaluations-ui", response_class=HTMLResponse, include_in_schema=False)
 async def evaluations_ui(request: Request):
     return templates.TemplateResponse(
+        request,
         "evaluation_runs_ui.html",
         {
-            "request": request,
             "active_eval_nav": "runs",
         },
     )
@@ -67,9 +67,9 @@ async def evaluations_ui(request: Request):
 @router.get("/evaluations-create-ui", response_class=HTMLResponse, include_in_schema=False)
 async def evaluation_new_ui(request: Request):
     return templates.TemplateResponse(
+        request,
         "evaluation_new_ui.html",
         {
-            "request": request,
             "active_eval_nav": "new",
             "chunking_strategies": get_chunking_registry().names(),
             "evaluation_defaults": {
@@ -85,9 +85,9 @@ async def evaluation_new_ui(request: Request):
 @router.get("/evaluations/{run_id}/ui", response_class=HTMLResponse, include_in_schema=False)
 async def evaluation_run_detail_ui(request: Request, run_id: str):
     return templates.TemplateResponse(
+        request,
         "evaluation_run_detail_ui.html",
         {
-            "request": request,
             "active_eval_nav": "runs",
             "run_id": run_id,
         },
@@ -97,9 +97,9 @@ async def evaluation_run_detail_ui(request: Request, run_id: str):
 @router.get("/evaluations-compare-ui", response_class=HTMLResponse, include_in_schema=False)
 async def evaluation_compare_ui(request: Request):
     return templates.TemplateResponse(
+        request,
         "evaluation_compare_ui.html",
         {
-            "request": request,
             "active_eval_nav": "compare",
         },
     )
@@ -108,9 +108,9 @@ async def evaluation_compare_ui(request: Request):
 @router.get("/evaluation-datasets-ui", response_class=HTMLResponse, include_in_schema=False)
 async def evaluation_datasets_ui(request: Request):
     return templates.TemplateResponse(
+        request,
         "evaluation_datasets_ui.html",
         {
-            "request": request,
             "active_eval_nav": "datasets",
         },
     )

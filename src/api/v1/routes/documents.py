@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from src.api.v1.dependencies import VectorStoreDep
+from src.api.v1.dependencies import KeywordIndexDep, VectorStoreDep
 from src.api.v1.schemas import (
     DocumentChunkItem,
     DocumentChunkListResponse,
@@ -11,6 +11,7 @@ from src.api.v1.schemas import (
 )
 from src.modules.documents import DocumentsRepositoryDep
 from src.modules.users.dependencies import ActiveUserDep
+from src.modules.access.dependencies import PermissionServiceDep
 from src.rag.models import RAGChunk
 
 router = APIRouter(tags=["documents"])
@@ -20,13 +21,12 @@ router = APIRouter(tags=["documents"])
 async def list_documents(
     current_user: ActiveUserDep,
     repository: DocumentsRepositoryDep,
+    permissions: PermissionServiceDep,
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ):
-    items = await repository.list_owned_documents(
-        owner_user_id=current_user.id,
-        limit=limit,
-        offset=offset,
+    items = await permissions.list_accessible_documents(
+        user=current_user, limit=limit, offset=offset,
     )
     return DocumentListResponse(
         status="ok",
@@ -35,6 +35,13 @@ async def list_documents(
                 doc_id=item.id,
                 owner_user_id=item.owner_user_id,
                 source=item.source,
+                document_type=item.document_type,
+                product_name=item.product_name,
+                product_version=item.product_version,
+                department=item.department,
+                knowledge_space_id=item.knowledge_space_id,
+                visibility=item.visibility,
+                ingestion_status=item.ingestion_status,
                 chunking_strategy=item.chunking_strategy,
                 chunk_size=item.chunk_size,
                 chunk_overlap=item.chunk_overlap,
@@ -54,18 +61,22 @@ async def get_document(
     doc_id: str,
     current_user: ActiveUserDep,
     repository: DocumentsRepositoryDep,
+    permissions: PermissionServiceDep,
 ):
-    item = await repository.get_owned_document(
-        owner_user_id=current_user.id,
-        doc_id=doc_id,
-        include_deleted=False,
-    )
+    item = await permissions.accessible_document(user=current_user, doc_id=doc_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Document not found.")
     return DocumentItem(
         doc_id=item.id,
         owner_user_id=item.owner_user_id,
         source=item.source,
+        document_type=item.document_type,
+        product_name=item.product_name,
+        product_version=item.product_version,
+        department=item.department,
+        knowledge_space_id=item.knowledge_space_id,
+        visibility=item.visibility,
+        ingestion_status=item.ingestion_status,
         chunking_strategy=item.chunking_strategy,
         chunk_size=item.chunk_size,
         chunk_overlap=item.chunk_overlap,
@@ -81,16 +92,13 @@ async def list_document_chunks(
     current_user: ActiveUserDep,
     repository: DocumentsRepositoryDep,
     vector_store: VectorStoreDep,
+    permissions: PermissionServiceDep,
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     page_number: int | None = Query(default=None, ge=1),
     q: str | None = Query(default=None),
 ):
-    item = await repository.get_owned_document(
-        owner_user_id=current_user.id,
-        doc_id=doc_id,
-        include_deleted=False,
-    )
+    item = await permissions.accessible_document(user=current_user, doc_id=doc_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Document not found.")
 
@@ -130,22 +138,20 @@ async def delete_document(
     current_user: ActiveUserDep,
     repository: DocumentsRepositoryDep,
     vector_store: VectorStoreDep,
+    keyword_index: KeywordIndexDep,
+    permissions: PermissionServiceDep,
 ):
-    existing = await repository.get_owned_document(
-        owner_user_id=current_user.id,
-        doc_id=doc_id,
-        include_deleted=True,
-    )
+    existing = await permissions.accessible_document(user=current_user, doc_id=doc_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Document not found.")
+    if not await permissions.can_manage_document(user=current_user, document=existing):
+        raise HTTPException(status_code=403, detail="Document management permission required.")
     was_already_deleted = existing.deleted_at is not None
 
-    item = await repository.soft_delete_owned_document(
-        owner_user_id=current_user.id,
-        doc_id=doc_id,
-    )
+    item = await repository.soft_delete_document(document=existing)
     await repository.commit()
     await vector_store.delete_by_doc_id(doc_id=doc_id)
+    await keyword_index.delete_by_doc_id(doc_id=doc_id)
 
     return DocumentDeleteResponse(
         status="ok",

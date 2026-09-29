@@ -1,7 +1,7 @@
 (function (window) {
   "use strict";
 
-  var TOKEN_KEY = "agentic_rag_jwt";
+  var TOKEN_KEY = "enterprise_support_jwt";
 
   function saveToken(token) {
     localStorage.setItem(TOKEN_KEY, token);

@@ -21,6 +21,25 @@ class AgentAskRequest(BaseModel):
         default=None,
         description="Optional session id used for tool context.",
     )
+    product_name: str | None = None
+    product_version: str | None = None
+    document_types: list[str] = Field(default_factory=list)
+    knowledge_space_id: str | None = None
+
+
+class AgenticAskRequest(BaseModel):
+    question: str = Field(min_length=1, description="Question for the corrective RAG graph.")
+    doc_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional exact document scope. Omit it to search every accessible document "
+            "matching the metadata filters."
+        ),
+    )
+    product_name: str | None = None
+    product_version: str | None = None
+    document_types: list[str] = Field(default_factory=list)
+    knowledge_space_id: str | None = None
 
 
 class AgentAskResponse(BaseModel):

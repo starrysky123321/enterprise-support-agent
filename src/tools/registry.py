@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
 from src.shared.interfaces.llm import ToolCall
 from src.shared.interfaces.tool import Tool, ToolContext, ToolExecutionResult
@@ -24,7 +24,7 @@ class ToolRegistry:
         except KeyError as exc:
             raise KeyError(f"Tool '{name}' is not registered.") from exc
 
-    def list_openai_tools(self) -> list[dict]:
+    def list_openai_tools(self) -> list[Mapping[str, Any]]:
         return [tool.to_openai_tool() for tool in self._tools.values()]
 
     async def execute(

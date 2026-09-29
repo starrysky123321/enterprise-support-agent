@@ -7,7 +7,7 @@ from typing import Any
 
 from src.settings.config import settings
 
-TRACE_LOGGER_NAME = "agentic_rag.trace"
+TRACE_LOGGER_NAME = "enterprise_support.trace"
 _logger = logging.getLogger(TRACE_LOGGER_NAME)
 
 
@@ -56,6 +56,7 @@ def chunk_metadata(chunks: list[Any]) -> list[dict[str, Any]]:
                 "page_number": getattr(chunk, "page_number", None),
                 "score": getattr(chunk, "score", None),
                 "source": getattr(chunk, "source", None),
+                "retrieval_sources": getattr(chunk, "retrieval_sources", ()),
             }
         )
     return metadata

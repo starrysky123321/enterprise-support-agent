@@ -7,10 +7,13 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents import AgentAskPipeline, AgentService, QueryRefinementService
+from src.agents.langgraph_rag import LangGraphRAGService
 from src.infrastructure.database import get_db
 from src.infrastructure.llm.huggingface_embeddings import HuggingFaceEmbeddingProvider
 from src.infrastructure.llm.openai_embeddings import OpenAIEmbeddingProvider
 from src.infrastructure.llm.openai_llm import OpenAILLM
+from src.infrastructure.llm.local_llm import LocalExtractiveLLM
+from src.infrastructure.llm.local_embeddings import LocalHashEmbeddingProvider
 from src.infrastructure.database import AsyncSessionFactory
 from src.modules.evaluation.judge import ContextRelevanceJudge
 from src.modules.evaluation.retriever import (
@@ -33,6 +36,9 @@ from src.settings.config import settings
 from src.shared.interfaces.llm import LLM
 from src.tools import PingTool, RetrieverTool, ToolRegistry
 from src.modules.documents.dependencies import DocumentsRepositoryDep
+from src.modules.access.dependencies import PermissionServiceDep
+from src.rag.keyword import KeywordIndex
+from src.infrastructure.keyword import SQLiteBM25Index
 
 if TYPE_CHECKING:
     from src.modules.semantic_cache.repository import SemanticCacheRepository
@@ -43,6 +49,18 @@ DbSessionDep = Annotated[AsyncSession, Depends(get_db)]
 
 @lru_cache
 def get_llm() -> LLM:
+    if settings.llm_provider == "local":
+        return LocalExtractiveLLM()
+    if settings.llm_provider == "qwen":
+        if settings.dashscope_api_key is None:
+            raise RuntimeError("Missing DASHSCOPE_API_KEY in environment.")
+        return OpenAILLM(
+            api_key=settings.dashscope_api_key.get_secret_value(),
+            model=settings.dashscope_model_name,
+            base_url=settings.dashscope_base_url,
+            timeout_s=settings.dashscope_timeout_seconds,
+            max_retries=settings.external_max_retries,
+        )
     if not settings.openai_key:
         raise RuntimeError("Missing OPENAI_KEY in environment.")
     if not settings.model:
@@ -52,6 +70,8 @@ def get_llm() -> LLM:
         api_key=settings.openai_key,
         model=settings.model,
         base_url=settings.ollama_base_url,
+        timeout_s=settings.external_request_timeout_s,
+        max_retries=settings.external_max_retries,
     )
 
 
@@ -78,6 +98,9 @@ def get_embedding_provider() -> EmbeddingProvider:
         raise RuntimeError("Missing EMBEDDING_MODEL in environment.")
     provider_name = settings.embedding_provider
 
+    if provider_name == "local":
+        return LocalHashEmbeddingProvider()
+
     if provider_name == "openai":
         if not settings.openai_key:
             raise RuntimeError("Missing OPENAI_KEY in environment.")
@@ -85,13 +108,15 @@ def get_embedding_provider() -> EmbeddingProvider:
             api_key=settings.openai_key,
             model=settings.embedding_model,
             base_url=settings.embedding_base_url,
+            timeout_s=settings.external_request_timeout_s,
+            max_retries=settings.external_max_retries,
         )
 
     if provider_name == "huggingface":
         return HuggingFaceEmbeddingProvider(model_name=settings.embedding_model)
 
     raise RuntimeError(
-        f"Unsupported EMBEDDING_PROVIDER '{provider_name}'. Use 'openai' or 'huggingface'."
+        f"Unsupported EMBEDDING_PROVIDER '{provider_name}'. Use 'local', 'openai' or 'huggingface'."
     )
 
 
@@ -138,19 +163,35 @@ VectorStoreDep = Annotated[VectorStore, Depends(get_vector_store)]
 
 
 @lru_cache
+def get_keyword_index() -> KeywordIndex:
+    return SQLiteBM25Index(database_path=settings.bm25_database_path)
+
+
+KeywordIndexDep = Annotated[KeywordIndex, Depends(get_keyword_index)]
+
+
+@lru_cache
 def get_reranker() -> Reranker | None:
     if not settings.reranker_enabled:
         return None
-    if not settings.reranker_api_key:
-        raise RuntimeError("Missing RERANKER_API_KEY in environment.")
     if not settings.reranker_model:
         raise RuntimeError("Missing RERANKER_MODEL in environment.")
+
+    if settings.reranker_provider == "local":
+        from src.infrastructure.reranker import LocalCrossEncoderReranker
+
+        return LocalCrossEncoderReranker(
+            model=settings.reranker_model, timeout_s=settings.reranker_timeout_s,
+        )
+    if not settings.reranker_api_key:
+        raise RuntimeError("Missing RERANKER_API_KEY in environment.")
 
     from src.infrastructure.reranker import CohereReranker
 
     return CohereReranker(
         api_key=settings.reranker_api_key,
         model=settings.reranker_model,
+        timeout_s=settings.reranker_timeout_s,
     )
 
 
@@ -193,6 +234,7 @@ def get_rag_ingestion_service() -> RAGIngestionService:
         chunk_overlap=settings.rag_chunk_overlap,
         pdf_extractor=get_pdf_extractor(),
         pdf_max_pages=settings.rag_pdf_max_pages,
+        keyword_index=get_keyword_index() if settings.bm25_enabled else None,
     )
 
 
@@ -207,10 +249,30 @@ def get_rag_retrieval_service() -> RAGRetrievalService:
         default_top_k=settings.rag_top_k,
         prefetch_k=settings.rag_prefetch_k,
         reranker=get_reranker(),
+        keyword_index=get_keyword_index() if settings.bm25_enabled else None,
+        dense_enabled=settings.dense_enabled,
+        bm25_enabled=settings.bm25_enabled,
+        dense_fetch_k=settings.dense_fetch_k,
+        bm25_fetch_k=settings.bm25_fetch_k,
+        rrf_k=settings.rrf_k,
+        candidate_k=settings.hybrid_candidate_k,
+        reranker_fail_open=settings.reranker_fail_open,
     )
 
 
 RAGRetrievalServiceDep = Annotated[RAGRetrievalService, Depends(get_rag_retrieval_service)]
+
+
+def get_langgraph_rag_service(
+    retrieval_service: RAGRetrievalServiceDep, llm: LLMDep,
+) -> LangGraphRAGService:
+    return LangGraphRAGService(
+        retrieval_service=retrieval_service, llm=llm,
+        max_retrieval_attempts=settings.agentic_max_retrieval_attempts,
+    )
+
+
+LangGraphRAGServiceDep = Annotated[LangGraphRAGService, Depends(get_langgraph_rag_service)]
 
 
 @lru_cache
@@ -251,6 +313,7 @@ def get_agent_ask_pipeline(
     embedding_provider: EmbeddingProviderDep,
     semantic_cache_service: SemanticCacheServiceDep,
     documents_repository: DocumentsRepositoryDep,
+    permission_service: PermissionServiceDep,
 ) -> AgentAskPipeline:
     return AgentAskPipeline(
         agent_service=agent_service,
@@ -259,6 +322,7 @@ def get_agent_ask_pipeline(
         embedding_provider=embedding_provider,
         semantic_cache_service=semantic_cache_service,
         documents_repository=documents_repository,
+        permission_service=permission_service,
     )
 
 
@@ -274,6 +338,8 @@ def get_evaluation_retriever() -> EvaluationRetriever:
 
 @lru_cache
 def get_evaluation_judge() -> ContextRelevanceJudge | None:
+    if not settings.evaluation_judge_enabled:
+        return None
     if not settings.openai_key:
         raise RuntimeError("Missing OPENAI_KEY in environment.")
     if not settings.evaluation_judge_model:
@@ -283,6 +349,8 @@ def get_evaluation_judge() -> ContextRelevanceJudge | None:
         api_key=settings.openai_key,
         model=settings.evaluation_judge_model,
         base_url=settings.evaluation_judge_base_url or settings.ollama_base_url,
+        timeout_s=settings.external_request_timeout_s,
+        max_retries=settings.external_max_retries,
     )
     return ContextRelevanceJudge(
         llm=llm,

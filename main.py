@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from src.api.v1.routes.agent import router as agent_router
 from src.api.v1.routes.auth import router as auth_router
@@ -11,6 +11,8 @@ from src.api.v1.routes.health import router as health_router
 from src.api.v1.routes.rag import router as rag_router
 from src.api.v1.routes.ui import router as ui_router
 from src.api.v1.routes.users import router as users_router
+from src.api.v1.routes.ingestion import router as ingestion_router
+from src.api.v1.routes.access import router as access_router
 from src.infrastructure.database import engine
 from src.shared.tracing import configure_trace_logging
 
@@ -24,7 +26,21 @@ async def lifespan(_: FastAPI):
 
 
 configure_trace_logging()
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    title="Enterprise Support Agent",
+    description="企业技术支持与故障诊断平台",
+    version="0.2.0",
+    lifespan=lifespan,
+)
+
+
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(__import__("uuid").uuid4())
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
 static_dir = Path(__file__).resolve().parent / "static"
 static_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
@@ -37,4 +53,6 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(documents_router)
 app.include_router(evaluations_router)
+app.include_router(ingestion_router)
+app.include_router(access_router)
 app.include_router(ui_router)

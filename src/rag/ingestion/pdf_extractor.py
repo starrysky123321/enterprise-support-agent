@@ -6,18 +6,24 @@ import io
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+pd: Any
 try:
-    import pandas as pd
+    import pandas as _pandas
+    pd = _pandas
 except ImportError:  # pragma: no cover - dependency presence is environment-specific
     pd = None
 
+_pdfplumber: Any
 try:
-    import pdfplumber as _pdfplumber
+    import pdfplumber
+    _pdfplumber = pdfplumber
 except ImportError:  # pragma: no cover - dependency presence is environment-specific
     _pdfplumber = None
 
+_rapidfuzz: Any
 try:
-    from rapidfuzz import fuzz as _rapidfuzz
+    from rapidfuzz import fuzz
+    _rapidfuzz = fuzz
 except ImportError:  # pragma: no cover - dependency presence is environment-specific
     _rapidfuzz = None
 

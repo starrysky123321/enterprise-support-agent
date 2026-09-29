@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import pytest
 
@@ -106,4 +107,20 @@ def test_cohere_reranker_raises_on_malformed_payload(monkeypatch):
                 chunks=_sample_chunks(),
                 top_n=2,
             )
+        )
+
+
+def test_cohere_reranker_enforces_timeout(monkeypatch):
+    monkeypatch.setattr(
+        "src.infrastructure.reranker.cohere_reranker._Document",
+        FakeDocument,
+    )
+    reranker = CohereReranker(
+        api_key="cohere-key", model="rerank-v4.0-fast", timeout_s=0.001,
+    )
+    monkeypatch.setattr(reranker, "_rerank_sync", lambda **_: time.sleep(0.02))
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(
+            reranker.rerank(query="refund rules", chunks=_sample_chunks(), top_n=2)
         )

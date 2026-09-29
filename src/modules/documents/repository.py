@@ -22,6 +22,14 @@ class DocumentsRepository:
         chunking_strategy: str | None = None,
         chunk_size: int | None = None,
         chunk_overlap: int | None = None,
+        document_type: str = "manual",
+        product_name: str | None = None,
+        product_version: str | None = None,
+        department: str | None = None,
+        knowledge_space_id: str | None = None,
+        visibility: str = "private",
+        content_sha256: str | None = None,
+        ingestion_status: str = "completed",
     ) -> Document:
         document = Document(
             id=doc_id,
@@ -30,6 +38,14 @@ class DocumentsRepository:
             chunking_strategy=chunking_strategy,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+            document_type=document_type,
+            product_name=product_name,
+            product_version=product_version,
+            department=department,
+            knowledge_space_id=knowledge_space_id,
+            visibility=visibility,
+            content_sha256=content_sha256,
+            ingestion_status=ingestion_status,
         )
         self._session.add(document)
         await self._session.flush()
@@ -110,6 +126,14 @@ class DocumentsRepository:
             await self._session.flush()
         return document
 
+    async def soft_delete_document(self, *, document: Document) -> Document:
+        if document.deleted_at is None:
+            now = datetime.now(timezone.utc)
+            document.deleted_at = now
+            document.updated_at = now
+            await self._session.flush()
+        return document
+
     async def doc_id_exists(
         self,
         *,
@@ -158,4 +182,3 @@ class DocumentsRepository:
 
     async def rollback(self) -> None:
         await self._session.rollback()
-

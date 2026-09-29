@@ -1,0 +1,12 @@
+Enterprise Support Agent
+
+This project is derived from:
+https://github.com/mahmoudsamy7729/agentic-rag
+
+The upstream project is distributed under the MIT License. Its license terms
+are reproduced in LICENSE. Modifications and newly added files in this
+repository are also distributed under the MIT License unless a file states
+otherwise.
+
+Third-party Python packages and container images remain subject to their own
+licenses. See pyproject.toml and docker-compose.yml for the dependency lists.

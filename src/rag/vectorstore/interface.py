@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from src.rag.models import RAGChunk, RetrievedChunk
+from src.rag.models import RAGChunk, RetrievedChunk, RetrievalFilter
 
 
 class VectorStore(ABC):
@@ -22,6 +22,7 @@ class VectorStore(ABC):
         query_embedding: list[float],
         top_k: int,
         doc_id: str | None = None,
+        filters: RetrievalFilter | None = None,
     ) -> list[RetrievedChunk]:
         """Return top-k most similar chunks."""
 

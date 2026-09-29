@@ -1,355 +1,121 @@
-# Agentic RAG
+# Enterprise Support Agent（企业技术支持与故障诊断平台）
 
-Production-oriented FastAPI starter for authenticated, document-scoped, evaluation-driven RAG systems.
+企业技术支持与故障诊断平台：摄取产品手册、API 文档、SOP、历史工单、Release Notes、FAQ 和配置说明，通过权限感知的 Dense + BM25 + RRF 检索与有界 LangGraph 工作流生成带页码/Chunk 引用的答案。证据不足时返回结构化拒答。
 
-This project is built around a simple idea: a RAG app should not stop at ingestion and retrieval. It should support ownership, scoped access, caching, evaluation, and a usable UI from day one.
+本项目基于 [mahmoudsamy7729/agentic-rag](https://github.com/mahmoudsamy7729/agentic-rag) 二次开发。来源与许可说明见 [NOTICE](NOTICE)，整体以 [MIT License](LICENSE) 开源。
 
-## Why This Repo Exists
+## 已实现能力
 
-Most RAG demos stop at "upload text, ask question". This project goes further:
+- FastAPI Users 注册、JWT 登录/刷新、HttpOnly cookie
+- 文档类型、产品、版本、部门、知识空间、可见性 metadata
+- Chroma Dense 检索 + SQLite FTS5 BM25 + Reciprocal Rank Fusion
+- 两路检索前使用相同的权限与 metadata filter
+- 可选本地 sentence-transformers Cross-Encoder（`local-ml` Extra）或 Cohere reranker；失败可配置 fail-open，日志不写正文
+- 普通工具调用 RAG 和 LangGraph Agentic RAG 双路径
+- Agentic RAG 支持单文档或权限范围内多文档检索，最多 1–3 次（默认 2），引用 ID 完整性校验和证据不足拒答
+- SSE 阶段事件：分类、改写、检索、生成、引用校验失败重试、完成或拒答
+- 持久化摄取任务、SHA-256 幂等、后台开发模式和 Redis/ARQ worker 模式
+- private / department / workspace 权限，admin / workspace_admin / member 角色
+- PostgreSQL + pgvector 语义缓存；提供包含权限范围与 pipeline 版本的规范缓存指纹
+- 原有 Hit@K、Recall@K、MRR 评测，以及本地可重复 JSON/Markdown 报告
+- 无密钥本地 hash embedding 与严格抽取式 LLM 降级；hash embedding 仅用于链路验证，不宣称语义检索质量
 
-- authenticated users and owned documents
-- document-scoped retrieval to prevent cross-document leakage
-- text and PDF ingestion
-- pluggable embeddings and reranking
-- semantic answer cache
-- evaluation pipeline with run history, case inspection, and rerun support
-- simple built-in UI for asking questions and running evaluations
+## 本地启动
 
-## Demo Surface
-
-Main UI pages:
-
-- `/login-ui` - login page with JWT-based browser auth
-- `/ask-ui` - single-turn ask UI with citations, cache status, and refined query
-- `/evaluation-ui` - create evaluation runs
-- `/evaluation-history-ui` - compare historical runs
-- `/evaluations/{run_id}/ui` - inspect cases and rerun failed ones in place
-
-Demo video:
-
-- [Watch the demo video](https://player.puppydog.io/play/0od5an)
-
-### Login UI
-
-<p align="center">
-  <img src="demo/login.png" alt="Login UI" width="48%" />
-  <img src="demo/ask-ui.png" alt="Ask UI" width="48%" />
-</p>
-
-### Evaluation UI
-
-<p align="center">
-  <img src="demo/evalutaion-ui.png" alt="Evaluation Run UI" width="48%" />
-  <img src="demo/eval-cropped.png" alt="Evaluation Results" width="48%" />
-</p>
-
-## Features
-
-- Agent loop with tool calling
-- Retriever tool integrated into the agent workflow
-- Chroma vector store with persistent local storage
-- OpenAI and Hugging Face embedding providers
-- Optional Cohere reranker
-- Query refinement before retrieval and semantic cache lookup
-- Semantic cache backed by Postgres + pgvector
-- Text ingestion and text-based PDF ingestion with page metadata
-- Page-aware citations in answers
-- User authentication with access + refresh JWT flow
-- Document ownership, listing, and soft delete
-- Evaluation pipeline with retrieval metrics and LLM-judge answer metrics
-- Jinja-based UI for asking questions and managing evaluation runs
-- Dockerized local development stack with Postgres + pgAdmin
-
-## Architecture
-
-At a high level, the system is split into API routes, agent orchestration, RAG services, infrastructure adapters, and domain modules for users, documents, evaluation, and semantic cache.
-
-```mermaid
-flowchart TD
-    UI[UI Pages / API Clients] --> API[FastAPI Routes]
-    API --> AUTH[Auth + Active User]
-    API --> ASK[Ask Pipeline]
-    API --> INGEST[RAG Ingestion Service]
-    API --> EVAL[Evaluation Service]
-
-    ASK --> REFINE[Query Refinement]
-    ASK --> CACHE[Semantic Cache]
-    ASK --> AGENT[Agent Service]
-    AGENT --> TOOLS[Tool Registry]
-    TOOLS --> RETRIEVE[Retriever Tool]
-    RETRIEVE --> RAG[RAG Retrieval Service]
-    RAG --> EMBED[Embedding Provider]
-    RAG --> VECTOR[Chroma Vector Store]
-    RAG --> RERANK[Cohere Reranker]
-
-    INGEST --> PDF[PDF Extractor / Chunker]
-    INGEST --> EMBED
-    INGEST --> VECTOR
-    INGEST --> DOCS[Documents Module]
-
-    EVAL --> ASK
-    EVAL --> JUDGE[Judge Service]
-    EVAL --> REPORTS[Evaluation Runs / Cases]
-
-    AUTH --> USERS[Users Module]
-    CACHE --> PG[(Postgres + pgvector)]
-    REPORTS --> PG
-    DOCS --> PG
-    USERS --> PG
-```
-
-## Tech Stack
-
-- API: FastAPI
-- ORM / DB: SQLAlchemy, Alembic, PostgreSQL, pgvector
-- Vector DB: Chroma
-- LLM: OpenAI-compatible chat backend
-- Embeddings: OpenAI or Hugging Face
-- Reranking: Cohere
-- Auth: FastAPI Users + custom JWT login/refresh flow
-- PDF extraction: `pdfplumber`, `pandas`, `rapidfuzz`
-- UI: Jinja templates + shared browser auth client
-- Dev/runtime: Docker, Docker Compose, `uv`
-
-## Project Layout
-
-```text
-src/
-  agents/                ask pipeline, agent loop, cache policy, query refinement
-  api/v1/                routes, schemas, dependency wiring
-  infrastructure/        llm, vector db, reranker, database adapters
-  modules/
-    users/               auth model and user dependencies
-    documents/           ownership and document lifecycle
-    semantic_cache/      pgvector-backed answer cache
-    evaluation/          eval runs, cases, judge service
-  rag/
-    ingestion/           chunker and PDF extractor
-    pipeline/            ingestion and retrieval services
-    embeddings/          provider contracts
-    reranker/            reranker contracts
-    vectorstore/         vector store contracts
-  settings/              app configuration
-  tools/                 retriever tool and registry
-templates/               Jinja UI pages
-static/                  shared browser JS
-tests/                   unit and integration tests
-alembic/                 database migrations
-data/                    local Chroma persistence
-```
-
-## API Overview
-
-Core endpoints:
-
-- `POST /auth/jwt/login`
-- `POST /auth/jwt/refresh`
-- `POST /auth/jwt/logout`
-- `GET /users/me`
-- `POST /rag/ingest/text`
-- `POST /rag/ingest/pdf`
-- `POST /agent/ask`
-- `GET /documents`
-- `GET /documents/{doc_id}`
-- `DELETE /documents/{doc_id}`
-- `POST /evaluations/rag`
-- `GET /evaluations`
-- `GET /evaluations/{run_id}`
-- `GET /evaluations/{run_id}/cases`
-- `POST /evaluations/{run_id}/rerun-failed`
-- `GET /llm/health`
-- `GET /tools/health`
-
-## Getting Started
-
-### Prerequisites
-
-- Python `3.12+`
-- `uv`
-- Docker and Docker Compose
-- API credentials for the providers you enable
-
-### Environment
-
-Start from the example file:
+Python 3.12+、`uv` 和 Docker Compose：
 
 ```bash
 cp .env.example .env
-```
-
-At minimum, review:
-
-- database settings
-- JWT secrets
-- model and provider settings
-- reranker settings if enabled
-- evaluation judge model
-
-## Run With Docker
-
-This is the fastest way to boot the full stack locally.
-
-```bash
-docker compose up --build
-```
-
-Services:
-
-- API: `http://localhost:8000`
-- Swagger UI: `http://localhost:8000/docs`
-- pgAdmin: `http://localhost:5050`
-
-The app container runs Alembic migrations on startup and serves FastAPI with reload enabled for local development.
-
-## Run Locally Without Docker
-
-Install dependencies:
-
-```bash
+# 修改 POSTGRES_PASSWORD 和四个 JWT secret；本地 provider 无需第三方 key
+docker compose up -d db redis
 uv sync --dev
-```
-
-Run migrations:
-
-```bash
 uv run alembic upgrade head
+uv run uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-Start the app:
+仓库内的 Compose 配置用于本地开发，数据库、Redis、API 和可选 pgAdmin 默认只绑定 `127.0.0.1`。需要 pgAdmin 时运行 `docker compose --profile tools up -d pgadmin`。
+
+默认安装不包含 Torch、CUDA、sentence-transformers。只有需要本地 Hugging Face Embedding 或 Cross-Encoder 时才安装：
 
 ```bash
-uv run uvicorn main:app --reload
+uv sync --dev --extra local-ml
 ```
 
-## Typical Workflow
-
-### 1. Register and log in
-
-- Register through Swagger or your auth flow
-- Log in from `/login-ui` or `POST /auth/jwt/login`
-
-### 2. Ingest a document
-
-Text:
+生产式异步 worker：把 `.env` 中 `INGESTION_MODE=arq`，另开终端：
 
 ```bash
-curl -X POST http://localhost:8000/rag/ingest/text \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d "{\"text\":\"...\",\"source\":\"inline-text\"}"
+uv run arq src.modules.ingestion.worker.WorkerSettings
 ```
 
-PDF:
+### 使用通义千问
 
-Use `POST /rag/ingest/pdf` with multipart upload and the same bearer token.
-
-### 3. Ask the agent
+设置 `LLM_PROVIDER=qwen`，并在当前项目 `.env` 或进程环境中提供 `DASHSCOPE_API_KEY`、`DASHSCOPE_BASE_URL`、`DASHSCOPE_MODEL_NAME`：
 
 ```bash
-curl -X POST "http://localhost:8000/agent/ask?use_cache=true" \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d "{\"doc_id\":\"<doc_id>\",\"question\":\"What does the policy define as an Account?\"}"
+./scripts/run_with_questionnaire_qwen.sh
+curl http://127.0.0.1:8000/llm/health
 ```
 
-The response includes:
+如需读取其他位置的环境文件，可设置 `DASHSCOPE_ENV_FILE=/absolute/path/to/file`。生产部署应由 Secret Manager 或容器环境直接注入密钥。Embedding Provider 与 LLM Provider 独立；切换到千问生成时可继续使用现有本地 Embedding，无需重建索引。
 
-- final answer
-- `cache_status`
-- `refined_query`
-- `tools_used`
-- `steps`
-- citations with `doc_id`, `chunk_id`, and optional `page_number`
+也可运行完整的本地开发 Compose：`docker compose up --build`。API 文档位于 `http://localhost:8000/docs`。
 
-### 4. Run evaluation
+## 生产安全
 
-- Open `/evaluation-ui`
-- upload a JSONL dataset
-- select a `doc_id`
-- start a run and monitor progress
-- rerun failed cases directly from the run detail page when needed
-- inspect `/evaluation-history-ui` for comparisons
+- 设置 `ENVIRONMENT=production`；此模式会拒绝短于 32 字符的占位 JWT 密钥，并强制启用 Secure Cookie。
+- 不要公开暴露 PostgreSQL、Redis、pgAdmin 或 Chroma。当前 Chroma 仅按进程内 `PersistentClient` 使用。
+- 使用 Secret Manager 注入数据库密码、JWT 密钥和第三方 API Key，不要提交 `.env`、上传文档或本地索引。
+- 开发 Compose 包含热重载和源码挂载，不是生产部署清单。更多说明见 [SECURITY.md](SECURITY.md)。
 
-## Evaluation
-
-The evaluation system tracks both retrieval quality and answer quality.
-
-Retrieval metrics:
-
-- Hit@k
-- Recall@k
-- MRR
-
-Answer metrics:
-
-- Accuracy
-- Completeness
-- Relevance
-- Groundedness
-
-Each evaluation run stores:
-
-- aggregate metrics
-- per-case results
-- generated answers
-- citations
-- retrieval rankings
-- configuration snapshot for reproducibility
-
-## Configuration
-
-Settings are composed from:
-
-- [ai.py](d:/Agnetic%20AI/my-projects/agentic-rag/src/settings/ai.py)
-- [agent.py](d:/Agnetic%20AI/my-projects/agentic-rag/src/settings/agent.py)
-- [rag.py](d:/Agnetic%20AI/my-projects/agentic-rag/src/settings/rag.py)
-- [database.py](d:/Agnetic%20AI/my-projects/agentic-rag/src/settings/database.py)
-- [auth.py](d:/Agnetic%20AI/my-projects/agentic-rag/src/settings/auth.py)
-- [evaluation.py](d:/Agnetic%20AI/my-projects/agentic-rag/src/settings/evaluation.py)
-- [config.py](d:/Agnetic%20AI/my-projects/agentic-rag/src/settings/config.py)
-
-Main configurable areas:
-
-- model and provider selection
-- chunk size and overlap
-- top-k and prefetch-k
-- reranker enablement and model
-- semantic cache threshold
-- query refinement enablement
-- PDF limits
-- auth cookie behavior
-- evaluation judge model and limits
-
-## Extending The System
-
-Common extension points:
-
-- add new tools under `src/tools/`
-- add a new embedding provider behind the embedding interface
-- swap the vector store implementation behind the vector store contract
-- add new ingestion sources such as HTML, DOCX, or external connectors
-- add new evaluation datasets and domain-specific judge prompts
-- harden multi-tenant isolation further if you move beyond single-doc ask scope
-
-## Testing
-
-Run the test suite locally:
+## 最小 API 流程
 
 ```bash
-uv run pytest
+# 注册
+curl -X POST http://localhost:8000/auth/register -H 'Content-Type: application/json' \
+  -d '{"email":"intern@example.com","password":"ChangeMe123!"}'
+
+# department 只能由超级管理员分配，注册和普通资料更新传入该字段会返回 422
+# PATCH /users/{user_id}/department  body: {"department":"payments"}
+
+# 登录（保存 cookie，也返回 access_token）
+curl -c cookies.txt -X POST http://localhost:8000/auth/jwt/login \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d 'username=intern@example.com&password=ChangeMe123!'
+
+# 异步摄取
+curl -b cookies.txt -X POST http://localhost:8000/ingestion/text \
+  -H 'Content-Type: application/json' \
+  -d '{"doc_id":"ticket-1842","text":"E_CONN_TIMEOUT ...","source":"INC-1842","document_type":"ticket","product_name":"Nebula Gateway","product_version":"3.2"}'
+
+# 查询任务：GET /ingestion/tasks/{task_id}
+# 人工恢复失败任务：POST /ingestion/tasks/{task_id}/retry
+# Hybrid 检索：POST /rag/retrieve
+# 多文档 Agentic：省略 doc_id，按权限和 Metadata 同时检索 Release Notes/SOP/工单
+curl -b cookies.txt -X POST http://localhost:8000/agent/ask/agentic \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"结合版本记录、SOP 和历史工单诊断 3.2 超时", "product_name":"Nebula Gateway", "product_version":"3.2", "document_types":["release_note","sop","ticket"]}'
+# SSE 使用同一请求结构：POST /agent/ask/stream
 ```
 
-If you run tests in Docker, make sure the `tests/` directory is mounted into the app container.
+旧的 `/rag/ingest/text` 和 `/rag/ingest/pdf` 保留为同步兼容端点；新调用应使用 `/ingestion/*`。
 
-## Contributing
+## 验证
 
-Issues, bug reports, architecture suggestions, and focused PRs are welcome. Keep changes small, explicit, and test-backed where possible.
+```bash
+uv run pytest -q
+uv run ruff check src main.py scripts eval
+uv run mypy src main.py
+uv run --extra local-ml python eval/run_local_evaluation.py
+docker compose --env-file .env.example config
+bash scripts/audit_dependencies.sh
+```
 
-## License
+评测报告会在本地生成到 `eval/reports/evaluation-report.json` 和 `eval/reports/evaluation-report.md`，该目录不会提交到 Git。
 
-[MIT](LICENSE)
+详细资料：
 
-## Support
-
-If this repo helps you, open an issue, share feedback, or star the project.
+- [架构说明](docs/architecture.md)
+- [评测说明](docs/evaluation.md)
+- [故障排查](docs/troubleshooting.md)
+- [贡献指南](CONTRIBUTING.md)
+- [安全策略](SECURITY.md)

@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
-from jose import JWTError, ExpiredSignatureError, jwt
+import jwt
+from jwt import ExpiredSignatureError, InvalidTokenError
 
 from src.settings.config import settings
 
@@ -51,7 +52,7 @@ def verify_token(*, token: str, secret_key: str) -> dict[str, Any]:
         )
     except ExpiredSignatureError as exc:
         raise TokenExpiredError("Token has expired.") from exc
-    except JWTError as exc:
+    except InvalidTokenError as exc:
         raise TokenValidationError("Token is invalid.") from exc
 
     sub = payload.get("sub")

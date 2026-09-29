@@ -2,26 +2,32 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from pydantic import SecretStr
 
 from src.rag.models import RetrievedChunk
 from src.rag.reranker import Reranker
 
+_CohereRerank: Any
+_Document: Any
 try:
-    from langchain_cohere import CohereRerank as _CohereRerank
-    from langchain_core.documents import Document as _Document
+    from langchain_cohere import CohereRerank
+    from langchain_core.documents import Document
+    _CohereRerank = CohereRerank
+    _Document = Document
 except ImportError:
     _CohereRerank = None
     _Document = None
 
 
 class CohereReranker(Reranker):
-    def __init__(self, *, api_key: str, model: str) -> None:
+    def __init__(self, *, api_key: str, model: str, timeout_s: float = 20.0) -> None:
         if _CohereRerank is None or _Document is None:
             raise RuntimeError(
                 "langchain-cohere is not installed. Install it to use RERANKER_ENABLED=true."
             )
         self._api_key = api_key
         self._model = model
+        self._timeout_s = timeout_s
 
     @property
     def model_name(self) -> str:
@@ -40,11 +46,14 @@ class CohereReranker(Reranker):
             return []
 
         target_top_n = min(top_n, len(chunks))
-        return await asyncio.to_thread(
-            self._rerank_sync,
-            query=query,
-            chunks=chunks,
-            top_n=target_top_n,
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                self._rerank_sync,
+                query=query,
+                chunks=chunks,
+                top_n=target_top_n,
+            ),
+            timeout=self._timeout_s,
         )
 
     def _rerank_sync(
@@ -56,7 +65,7 @@ class CohereReranker(Reranker):
     ) -> list[RetrievedChunk]:
         reranker = _CohereRerank(
             model=self._model,
-            cohere_api_key=self._api_key,
+            cohere_api_key=SecretStr(self._api_key),
             top_n=top_n,
         )
 

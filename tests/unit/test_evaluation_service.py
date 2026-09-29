@@ -1,5 +1,4 @@
 import asyncio
-import tempfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -74,8 +73,8 @@ class FlakyRetriever:
         ][:k]
 
 
-def test_retrieval_evaluation_service_persists_completed_run_and_case():
-    temp_db = Path(tempfile.mkdtemp(prefix="eval-service-", dir=".")) / "test.db"
+def test_retrieval_evaluation_service_persists_completed_run_and_case(tmp_path: Path):
+    temp_db = tmp_path / "test.db"
     database_url = f"sqlite+aiosqlite:///{temp_db.as_posix()}"
     owner_id = uuid4()
 
@@ -108,7 +107,7 @@ def test_retrieval_evaluation_service_persists_completed_run_and_case():
 
         service = RetrievalEvaluationService(
             session_factory=session_factory,
-            dataset_storage_dir=str(Path(tempfile.mkdtemp(prefix="eval-data-", dir="."))),
+            dataset_storage_dir=str(tmp_path / "datasets"),
             retriever_factory=lambda: FakeRetriever(),
             judge_factory=lambda: FakeJudge(),
         )
@@ -163,8 +162,8 @@ def test_retrieval_evaluation_service_persists_completed_run_and_case():
     asyncio.run(_run())
 
 
-def test_retrieval_evaluation_service_reruns_failed_cases_in_place():
-    temp_db = Path(tempfile.mkdtemp(prefix="eval-rerun-service-", dir=".")) / "test.db"
+def test_retrieval_evaluation_service_reruns_failed_cases_in_place(tmp_path: Path):
+    temp_db = tmp_path / "test.db"
     database_url = f"sqlite+aiosqlite:///{temp_db.as_posix()}"
     owner_id = uuid4()
 
@@ -192,7 +191,7 @@ def test_retrieval_evaluation_service_reruns_failed_cases_in_place():
         retriever = FlakyRetriever()
         service = RetrievalEvaluationService(
             session_factory=session_factory,
-            dataset_storage_dir=str(Path(tempfile.mkdtemp(prefix="eval-rerun-data-", dir="."))),
+            dataset_storage_dir=str(tmp_path / "datasets"),
             retriever_factory=lambda: retriever,
             judge_factory=lambda: FakeJudge(),
         )
