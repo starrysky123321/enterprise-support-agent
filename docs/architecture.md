@@ -11,12 +11,16 @@ flowchart LR
   B --> R[RRF fusion]
   D --> R
   R --> X[Optional Cross-Encoder]
-  X --> G[Ordinary RAG or LangGraph]
+  X --> O[Single-document tool-based RAG]
+  O --> S[Answer with retrieved evidence]
+  X --> G[Bounded LangGraph RAG]
   G --> V[Citation ID integrity check]
   V --> A[Answer or structured rejection]
 ```
 
 权限条件不是召回后的清理步骤。`PermissionService` 先计算当前用户可访问的文档 ID，`RetrievalFilter` 同时传给 SQLite FTS5 SQL 和 Chroma `where`。第三方旧 VectorStore adapter 不支持 filter 时，兼容路径才会在 adapter 返回后过滤；内置生产 adapter 使用前置过滤。
+
+对于 `CFG-3207 是什么意思` 这类单个错误码的释义查询，Dense 检索使用完整问题，BM25 在原权限和版本范围内按提取出的编号搜索。系统选一个明确解释该编号的分块，在 RRF 截断前保留，并占用最终 Top-K 的一个位置。启用重排时，其余位置按重排后的顺序返回。
 
 ## 摄取链路
 
@@ -36,7 +40,9 @@ POST /ingestion/text
 
 State 只有业务数据：original/current query、messages、filters、attempts、检索/相关文档、answer、citations、groundedness 和 failure reason。LLM 与 retrieval service 由构造函数注入，不进入 State。
 
-`classify -> rewrite -> retrieve -> grade` 后，有证据才生成；无证据且 attempts 小于上限才回到 rewrite。回答引用集合必须是 relevant chunk ID 的子集，否则最多重试到 `AGENTIC_MAX_RETRIEVAL_ATTEMPTS`，之后进入 reject。默认上限 2，配置校验不允许超过 3。这里的 `groundedness_result` 仅检查引用 ID 是否属于本次证据集合，不判断每个自然语言事实是否被证据蕴含；项目不能据此声称实现了完整 Faithfulness/Groundedness Judge。
+`classify -> rewrite -> retrieve -> grade` 后，本地抽取模式检查文档是否给出了问题所需的显式信息。比如问某版本的默认超时时间，要能定位到同时说明默认设置与时长的片段。日期、命令和表名也有对应的检查。普通单文档问答复用该检查，缺少证据时返回无答案结果。
+
+Agentic 路径在证据不足时回到 rewrite，继续在原权限范围内检索，默认最多检索两次。生成式模型会收到逐项检查问题所需事实的提示，明确拒答会走同一重试或拒答分支。API 的引用校验检查引用 ID 与本次证据的对应关系，SSE 在引用校验通过时发送回答与引用。完整的事实级语义核验仍需独立验证。
 
 ## 降级策略
 

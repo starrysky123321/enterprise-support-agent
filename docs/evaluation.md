@@ -1,22 +1,87 @@
-# Evaluation
+# 本地评测
 
-## 数据格式
+默认评测集包含 20 份合成技术资料、45 个分块和 63 道题。问题覆盖 37 个可回答的单文档案例、12 个可回答的多文档范围案例、7 个无答案问题和 7 个权限案例。扩展语料加入了相似编号、只提及编号的工单、不同版本的解释，以及受限和已删除的说明。
 
-`eval/datasets/support-eval.jsonl` 每行包含：问题、期望文档 ID、参考事实、权限范围和是否可回答。示例文档全部为本项目自行编写，存放在 `docs/examples/`。
+- 每份文档带有版本、部门、知识空间和可见性。[基础语料](../eval/datasets/support-corpus.jsonl) · [新增 8 篇](../eval/datasets/support-corpus-extra.jsonl)
+- 每题标注测试身份、版本、可回答性与预期证据。正例用文档 ID、分块 ID 和短引文定位证据，负例包含已知不可访问的文档与拒答或拒绝访问的预期。[基础题集](../eval/datasets/support-eval.jsonl) · [新增 13 题](../eval/datasets/support-eval-extra.jsonl)
 
-## 运行
+## 复现
+
+在项目目录运行。评测使用临时 SQLite、Chroma 和 SQLite FTS5，无需启动服务或配置 API key。默认用哈希向量与本地抽取模型做链路验证。
 
 ```bash
-uv run --extra local-ml python eval/run_local_evaluation.py
+uv run python eval/run_local_evaluation.py
 ```
 
-输出：
+用当前实现复跑原 12 篇、50 题的基线。
 
-- `eval/reports/evaluation-report.json`：机器可读结果与参数
-- `eval/reports/evaluation-report.md`：人类可读逐模式报告
+```bash
+uv run python eval/run_local_evaluation.py --baseline --output eval/reports/support-12-baseline.json
+```
 
-脚本实际比较 Dense Only、BM25 Only、Hybrid RRF、Hybrid + 本地 Cross-Encoder、普通单轮 RAG 和 Agentic RAG。本地 reranker 使用 `cross-encoder/ms-marco-MiniLM-L6-v2`，模型按 sentence-transformers 缓存；无 Cohere/OpenAI key 也能执行。
+运行语义检索与本地重排对照组。
 
-指标定义：Hit@K 表示 Top-K 是否含任一期望文档；Recall@K 是期望文档被找回比例；MRR 使用第一个期望文档的倒数排名；引用准确性是引用文档中属于期望集合的比例；`citation_integrity` 只检查引用是否来自本次检索结果；拒答准确性比较实际 status 与 `answerable`。当前没有事实级 NLI/LLM Judge，因此没有实现或报告真正的 Groundedness/Faithfulness。
+```bash
+uv run --extra local-ml python eval/run_local_evaluation.py \
+  --embedding-model BAAI/bge-small-en-v1.5 \
+  --reranker-model cross-encoder/ms-marco-MiniLM-L6-v2 \
+  --output eval/reports/support-20-evaluation.json
+```
 
-2026-08-07 的当前报告只有 3 条案例和 3 篇语料。现已从 Top-3 改为 Top-2，避免每次直接返回全部语料，但样本仍远不足以支持质量结论；即便 Hit@2/Recall@2/MRR 为 1.0，也只能证明这三个固定案例能跑通。普通 RAG 的引用准确性为 0.5、拒答准确性为 0.6667；Agentic RAG 对应为 1.0 和 1.0。`citation_integrity=1.0` 不等于事实忠实度。不得把这些数值描述为生产 Recall、MRR、Groundedness 或延迟指标。
+模型首次运行从 Hugging Face 下载。可向两个模型参数传入固定版本的本地 snapshot 路径。已测模型版本、语料 SHA-256 和 Python/ML 依赖版本见[基线数据](evaluation-baseline.json)。每次运行生成同名的 JSON 和 Markdown。逐题 JSON 包含检索排序、实际回答、实际引用、权限结果和耗时，默认位于 `eval/reports/evaluation-report.json`。
+
+## 评分口径
+
+- **检索**以可回答案例为分母，扩展集 49 题，原基线 40 题。Hit@5 表示前五个分块是否包含任一标注分块，Recall@5 表示找回的标注分块比例，MRR@5 衡量第一个标注分块的排名。
+- **回答**经过 FastAPI 路由、真实权限判断和对应的 Agent 流程。单文档对照向两条问答路由提交同一个 `doc_id`，扩展集共 48 题。其余 15 题由支持省略 `doc_id` 的 Agentic API 处理，仍然应用权限与版本过滤。原基线对应 39 题和 11 题。
+- **引用**以 API 实际返回的去重分块为输入。标注引用精度统计与标注分块匹配的引用比例，缺引用时计 0。参考事实覆盖率要求标注短引文同时出现在回答与对应引用片段中。两项均在可回答案例上计算。普通 RAG 会返回检索工具给出的证据，Agentic RAG 返回在回答中使用的引用。这是固定证据对照，完整事实正确性与改写后的语义一致性需要单独复核。
+- **权限与拒答**用实际返回的 404 和业务拒答分别计分。误拒率以可回答用例为分母，统计其中的拒答比例。测试身份通过进程内依赖注入，权限、部门和空间成员关系从数据库读取。检索结果或引用落在允许范围之外会使评测失败。此评测验证文档访问规则，登录和 Token 校验由其他测试覆盖。
+- **延迟**使用预热后逐题串行的本地 P95。检索时间不含预先算好的权限范围，回答时间包含进程内 ASGI 和权限查询。回答组使用同一条 Hybrid RRF 检索路径，关闭语义缓存和普通 RAG 查询重写。
+
+## 2026-11-18 证据检查改动前的基线
+
+Linux x86_64，Intel Core Ultra 7 255HX，CPU 执行本地模型，OMP 和 MKL 均为 2 线程。向量模型为 BGE-small-en-v1.5，重排模型为 MS MARCO MiniLM-L6-v2，回答使用本地抽取模式。
+
+| 检索模式 | Recall@5 | MRR@5 | 本地 P95 |
+| --- | ---: | ---: | ---: |
+| Dense | 96.25% | 0.9688 | 14.62 ms |
+| BM25 | 98.75% | 0.9875 | 0.85 ms |
+| Hybrid RRF | 98.75% | 0.9875 | 15.04 ms |
+| Hybrid RRF + Cross-Encoder | 98.75% | 0.9563 | 126.75 ms |
+
+| 回答路径 | 标注引用精度 | 参考事实覆盖率 | 正确拒答 | 单文档拒绝访问 | 本地 P95 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 普通 RAG，同一文档对照 | 35.42% | 100% | 0/4 | 3/3 | 22.10 ms |
+| Agentic RAG，同一文档对照 | 52.08% | 96.88% | 0/4 | 3/3 | 25.54 ms |
+| Agentic RAG，按权限跨文档 | 50.00% | 81.25% | 2/3 | — | 45.94 ms |
+
+四种检索模式与两条回答路径均未返回超范围文档。Hybrid RRF 与 BM25 在本批题中召回持平。两者都在 `rate-origin` 漏掉一条所需证据；重排未补回，首条相关证据的平均排名表现也下降。在单文档对照中，两条回答路径都未正确拒答 4 个无答案问题，例如问欧盟租户紧急限流豁免时长时，系统返回了通用限流段落。现有关键词相关性与引用校验无法判断片段是否足以回答具体问题。
+
+结果来自小规模、单产品、英文合成数据，主要用于检查行为和定位失败。中文分词、真实工单分布、远程生成模型和生产延迟需要单独评估。
+
+## 证据检查改动后的复测
+
+题集、语料和 BGE/Cross-Encoder 参数与上面的基线一致。问答继续使用本地抽取模式，另用默认哈希向量跑了一遍链路。新规则要求涉及默认超时、时长、日期、命令和表名的显式查询找到相应类型的证据。缺少证据时，Agentic 路径会在原权限范围内按上限重试。规则依赖原文的表达方式，完整的事实级语义核验需要独立验证。
+
+| 回答路径 | 正确拒答，改动前 → 后 | 复测误拒 | 参考事实覆盖率，改动前 → 后 |
+| --- | ---: | ---: | ---: |
+| 普通 RAG，同一文档对照 | 0/4 → 4/4 | 0/32 | 100% → 100% |
+| Agentic RAG，同一文档对照 | 0/4 → 4/4 | 0/32 | 96.88% → 100% |
+| Agentic RAG，按权限跨文档 | 2/3 → 3/3 | 0/8 | 81.25% → 81.25% |
+
+跨文档组的 3 个拒答案例包含 2 个无答案问题和 1 个无可读文档的权限案例。两种问答路径均未返回超范围文档。跨文档组的标注引用精度由 50.00% 降至 43.75%，因为其中一题附带了额外的队列排障片段。覆盖率保持一致，跨文档证据筛选仍有改进空间。
+
+## 20 篇扩展集实测
+
+以下是 BGE-small-en-v1.5 与 MS MARCO MiniLM-L6-v2 的结果，回答继续使用本地抽取。混合路径包含错误码提取与候选保留，单路对照按原始问题检索。
+
+| 检索模式 | Recall@5 | MRR@5 |
+| --- | ---: | ---: |
+| Dense | 96.94% | 0.9507 |
+| BM25 | 94.90% | 0.9456 |
+| Hybrid RRF | 98.98% | 0.9796 |
+| Hybrid RRF + Cross-Encoder | 98.98% | 0.9643 |
+
+在 3.2 的 `CFG-3207是什么意思` 用例上，Dense 首位是相似编号 `CFG-32070`，正确分块排第 3。混合检索与重排后的混合检索都把正确分块排在第一。同一编号在 3.3 的不同释义，以及对 `CFG-32070` 本身的查询，也都在这两条混合路径中排首位。
+
+两条问答路径都正确处理了 5 个单文档无答案案例和 6 个单文档拒绝访问案例。多文档范围组的 3 个拒答案例也均正确处理，参考事实覆盖率为 87.50%。所有评测路径均未返回超范围文档。扩展语料和题目为合成数据，结果用于检索和权限回归。

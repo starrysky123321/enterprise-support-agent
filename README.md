@@ -1,8 +1,35 @@
 # Enterprise Support Agent（企业技术支持与故障诊断平台）
 
-企业技术支持与故障诊断平台：摄取产品手册、API 文档、SOP、历史工单、Release Notes、FAQ 和配置说明，通过权限感知的 Dense + BM25 + RRF 检索与有界 LangGraph 工作流生成带页码/Chunk 引用的答案。证据不足时返回结构化拒答。
+企业技术支持与故障诊断平台。工程师可以同时查阅有权访问的版本说明、SOP 和历史工单，
+按带页码或分块引用的答案回溯证据。Dense 和 BM25 在召回前应用同一权限范围，RRF 合并候选，
+LangGraph 控制检索重试并支持证据不足时拒答。
 
 本项目基于 [mahmoudsamy7729/agentic-rag](https://github.com/mahmoudsamy7729/agentic-rag) 二次开发。来源与许可说明见 [NOTICE](NOTICE)，整体以 [MIT License](LICENSE) 开源。
+
+[故障诊断演示](docs/support-demo.md)涵盖跨文档诊断、同题切换权限和证据不足时拒答。
+[请求链路图](docs/architecture.md)展示权限条件如何进入两路检索。
+
+**本地评测**覆盖 20 份合成资料和 63 道题。使用 BGE 向量模型时，Hybrid RRF 的 Recall@5
+为 98.98%。三个错误码释义查询都把正确分块排在首位，两条问答路径均未返回超范围文档。
+[评测结果、失败案例与复现命令](docs/evaluation.md)
+
+## 请求链路
+
+```mermaid
+flowchart LR
+  U[已认证用户] --> P[PermissionService]
+  P --> F[RetrievalFilter / allowed_doc_ids]
+  F --> B[SQLite FTS5 BM25]
+  F --> D[Chroma Dense]
+  B --> R[RRF 融合]
+  D --> R
+  R --> X[可选 Cross-Encoder 重排]
+  X --> O[单文档普通 RAG]
+  O --> S[带检索证据回答]
+  X --> G[有界 LangGraph Agentic RAG]
+  G --> V[引用 ID 校验 / 证据检查]
+  V --> A[带引用回答或结构化拒答]
+```
 
 ## 已实现能力
 
@@ -17,7 +44,7 @@
 - 持久化摄取任务、SHA-256 幂等、后台开发模式和 Redis/ARQ worker 模式
 - private / department / workspace 权限，admin / workspace_admin / member 角色
 - PostgreSQL + pgvector 语义缓存；提供包含权限范围与 pipeline 版本的规范缓存指纹
-- 原有 Hit@K、Recall@K、MRR 评测，以及本地可重复 JSON/Markdown 报告
+- 原有检索评测，以及覆盖实际问答路由、引用与权限的本地 JSON 报告
 - 无密钥本地 hash embedding 与严格抽取式 LLM 降级；hash embedding 仅用于链路验证，不宣称语义检索质量
 
 ## 本地启动
@@ -52,7 +79,7 @@ uv run arq src.modules.ingestion.worker.WorkerSettings
 设置 `LLM_PROVIDER=qwen`，并在当前项目 `.env` 或进程环境中提供 `DASHSCOPE_API_KEY`、`DASHSCOPE_BASE_URL`、`DASHSCOPE_MODEL_NAME`：
 
 ```bash
-./scripts/run_with_questionnaire_qwen.sh
+./scripts/run_with_qwen.sh
 curl http://127.0.0.1:8000/llm/health
 ```
 
@@ -105,12 +132,12 @@ curl -b cookies.txt -X POST http://localhost:8000/agent/ask/agentic \
 uv run pytest -q
 uv run ruff check src main.py scripts eval
 uv run mypy src main.py
-uv run --extra local-ml python eval/run_local_evaluation.py
+uv run python eval/run_local_evaluation.py
 docker compose --env-file .env.example config
 bash scripts/audit_dependencies.sh
 ```
 
-评测报告会在本地生成到 `eval/reports/evaluation-report.json` 和 `eval/reports/evaluation-report.md`，该目录不会提交到 Git。
+逐题报告生成到 `eval/reports/evaluation-report.json`。本地语义模型与重排对照命令见[评测说明](docs/evaluation.md)。
 
 详细资料：
 
