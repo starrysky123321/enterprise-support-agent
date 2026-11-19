@@ -8,7 +8,7 @@ class AgentSettings(BaseSettings):
     agent_max_tokens: int | None = Field(default=None, ge=1)
     agent_timeout_s: float | None = Field(default=30.0, gt=0.0)
 
-    @field_validator("agent_max_tokens", mode="before")
+    @field_validator("agent_max_tokens", "agent_timeout_s", mode="before")
     @classmethod
     def _empty_string_to_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
