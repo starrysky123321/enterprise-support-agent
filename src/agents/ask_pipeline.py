@@ -112,7 +112,7 @@ class AgentAskPipeline:
             },
             model_version=self._llm.model_name,
             prompt_version=settings.prompt_version,
-            pipeline_version=settings.pipeline_version,
+            pipeline_version=f"{settings.pipeline_version}:evidence-v1:code-definition-v1",
         )
         cache_model_name = f"{self._llm.model_name}:{permission_key}"
         query_embedding: list[float] | None = None

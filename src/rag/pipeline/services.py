@@ -11,6 +11,7 @@ from src.rag.models import RetrievedChunk
 from src.rag.models import RetrievalFilter
 from src.rag.keyword import KeywordIndex
 from src.rag.retrieval import reciprocal_rank_fusion
+from src.rag.retrieval.error_codes import find_error_code_definition, lookup_error_code, reserve_definition
 from src.rag.reranker import Reranker
 from src.rag.vectorstore.interface import VectorStore
 from src.shared.tracing import TraceContext, chunk_metadata, trace_event
@@ -274,13 +275,24 @@ class RAGRetrievalService:
                 if effective_filters:
                     dense = [chunk for chunk in dense if effective_filters.matches(chunk)]
             ranked_lists["dense"] = dense
+        code = None
         if self._bm25_enabled and self._keyword_index is not None:
+            if "dense" in ranked_lists:
+                code = lookup_error_code(query)
             ranked_lists["bm25"] = await self._keyword_index.search(
-                query=query, top_k=max(self._bm25_fetch_k, final_k), filters=effective_filters,
+                query=code or query, top_k=max(self._bm25_fetch_k, final_k), filters=effective_filters,
             )
-        candidates = reciprocal_rank_fusion(
-            ranked_lists, rrf_k=self._rrf_k, limit=candidate_k
-        ) if len(ranked_lists) > 1 else next(iter(ranked_lists.values()), [])[:candidate_k]
+        definition = None
+        if len(ranked_lists) > 1:
+            definition = find_error_code_definition(code, ranked_lists["bm25"], effective_filters)
+            fused = reciprocal_rank_fusion(
+                ranked_lists, rrf_k=self._rrf_k, limit=None if definition else candidate_k,
+            )
+            candidates = reserve_definition(fused, definition, candidate_k)
+            if definition is not None:
+                definition = candidates[0]
+        else:
+            candidates = next(iter(ranked_lists.values()), [])[:candidate_k]
         trace_event(
             "retrieval.vector_search.completed",
             trace_context=trace_context,
@@ -288,6 +300,7 @@ class RAGRetrievalService:
             top_k=final_k,
             prefetch_k=candidate_k,
             candidate_count=len(candidates),
+            error_code_definition_reserved=definition is not None,
             candidates=chunk_metadata(candidates),
         )
         if not candidates:
@@ -319,7 +332,7 @@ class RAGRetrievalService:
                     chunks=candidates,
                     top_n=final_k,
                 )
-                results = reranked[:final_k]
+                results = reserve_definition(reranked, definition, final_k)
                 reranker_status = (
                     "succeeded_first_try" if attempt == 1 else "succeeded_on_retry"
                 )

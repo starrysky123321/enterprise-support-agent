@@ -11,8 +11,10 @@ def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip().lower())
 
 
-def is_no_answer_fallback(answer: str) -> bool:
+def is_no_answer_fallback(answer: str, *, exact: bool = False) -> bool:
     normalized_answer = _normalize_text(answer)
+    if exact:
+        return normalized_answer in _NO_ANSWER_CANONICAL_PHRASES
     return any(
         phrase in normalized_answer for phrase in _NO_ANSWER_CANONICAL_PHRASES
     )

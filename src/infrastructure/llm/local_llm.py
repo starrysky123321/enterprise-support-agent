@@ -8,13 +8,15 @@ from src.shared.interfaces.llm import (
     ChatMessage, GenerationConfig, LLM, LLMResponse, MessageRole, ToolCall,
 )
 
+LOCAL_EXTRACTIVE_MODEL = "local-extractive-v1"
+
 
 class LocalExtractiveLLM(LLM):
     """Strict local fallback that only answers from retriever tool payloads."""
 
     @property
     def model_name(self) -> str:
-        return "local-extractive-v1"
+        return LOCAL_EXTRACTIVE_MODEL
 
     @property
     def supports_tool_calls(self) -> bool:

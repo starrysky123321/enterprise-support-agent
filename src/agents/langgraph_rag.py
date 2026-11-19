@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import re
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from src.agents.cache_policy import is_no_answer_fallback
+from src.infrastructure.llm.local_llm import LOCAL_EXTRACTIVE_MODEL
+from src.rag.evidence import EvidenceText, select_local_evidence
 from src.rag.models import RetrievedChunk, RetrievalFilter
 from src.rag.pipeline import RAGRetrievalService
+from src.rag.retrieval.error_codes import find_error_code_definition, lookup_error_code
 from src.shared.interfaces.llm import ChatMessage, GenerationConfig, LLM, MessageRole
 
 
@@ -124,23 +128,31 @@ class LangGraphRAGService:
         }
 
     async def _grade_documents(self, state: AgenticRAGState) -> dict[str, Any]:
+        definition = find_error_code_definition(
+            lookup_error_code(state["original_query"]), state["retrieved_documents"],
+        )
         stop_words = {
             "the", "a", "an", "is", "are", "what", "which", "how", "after", "for",
             "of", "to", "and", "or", "in", "on", "请", "什么", "如何", "的", "和",
         }
         tokens = {
-            token for token in re.findall(r"[\w.-]+", state["original_query"].casefold())
+            token for token in re.findall(r"\w+(?:[.-]\w+)*", state["original_query"].casefold())
             if token not in stop_words and len(token) > 1
         }
         relevant: list[RetrievedChunk] = []
         for document in state["retrieved_documents"]:
-            document_tokens = set(re.findall(r"[\w.-]+", document.text.casefold()))
+            document_tokens = set(re.findall(r"\w+(?:[.-]\w+)*", document.text.casefold()))
             overlap = len(tokens & document_tokens) / max(1, len(tokens))
-            if overlap >= self._relevance_threshold or document.score > 0.75:
+            if document is definition or overlap >= self._relevance_threshold or document.score > 0.75:
                 relevant.append(document)
+        failure_reason = None if relevant else "no_relevant_documents"
+        if relevant and self._llm.model_name == LOCAL_EXTRACTIVE_MODEL:
+            relevant = self._extractive_context(state["original_query"], relevant)
+            if not relevant:
+                failure_reason = "insufficient_evidence"
         return {
             "relevant_documents": relevant,
-            "failure_reason": None if relevant else "no_relevant_documents",
+            "failure_reason": failure_reason,
         }
 
     def _after_grade(self, state: AgenticRAGState) -> str:
@@ -149,16 +161,21 @@ class LangGraphRAGService:
         return "retry" if state["retrieval_attempts"] < self._max_attempts else "reject"
 
     async def _generate_answer(self, state: AgenticRAGState) -> dict[str, Any]:
+        documents = state["relevant_documents"]
+        if self._llm.model_name == LOCAL_EXTRACTIVE_MODEL:
+            return self._extractive_answer(documents)
+
         evidence = "\n".join(
             f"[{citation_key(doc)}] {doc.source} page={doc.page_number}: {doc.text}"
-            for doc in state["relevant_documents"]
+            for doc in documents
         )
         messages = [
             ChatMessage(role=MessageRole.SYSTEM, content=(
                 "你是企业技术支持助手。只能使用给定证据回答。先给直接结论，再列可能原因和有顺序的排查步骤；"
                 "每个事实都附 [doc_id:chunk_id]（例如 [release-3.2:chunk-0]）。"
                 "不得添加证据中没有明确出现的环境、机制、原因、参数或操作；"
-                "可能原因没有额外证据时，明确写‘暂无额外证据’，禁止凭经验扩写。证据不足就拒答。"
+                "回答前逐项核对问题要求的事实。相关排查建议无法证明具体的版本、配置或数值。"
+                f"任何必需事实缺少直接证据时，只返回「{self.NO_EVIDENCE}」，不附引用。"
             )),
             ChatMessage(role=MessageRole.USER, content=f"问题：{state['original_query']}\n证据：\n{evidence}"),
         ]
@@ -169,31 +186,43 @@ class LangGraphRAGService:
             answer = response.content.strip()
         except Exception:
             answer = ""
-        # Local provider's refinement behavior is not an answer generator; use an extractive fallback.
-        if (
-            self._llm.model_name == "local-extractive-v1"
-            or not answer
-            or not any(f"[{citation_key(doc)}]" in answer for doc in state["relevant_documents"])
-        ):
-            evidence_lines = "\n".join(
-                f"- {doc.text.strip()[:420]} [{citation_key(doc)}]"
-                for doc in state["relevant_documents"][:4]
-            )
-            answer = (
-                "直接结论（本地抽取式降级）\n"
-                f"{evidence_lines}\n\n"
-                "说明\n- 当前未配置生成式模型，仅返回检索证据；请依据引用原文执行排查。"
-            )
-        citations = [
+        if answer.strip("「」") == self.NO_EVIDENCE or is_no_answer_fallback(answer, exact=True):
+            return {"answer": None, "citations": [], "failure_reason": "insufficient_evidence"}
+        if not answer:
+            extractive = self._extractive_context(state["original_query"], documents)
+            if not extractive:
+                return {"answer": None, "citations": [], "failure_reason": "insufficient_evidence"}
+            return self._extractive_answer(extractive)
+        return {"answer": answer, "citations": self._citations(answer, documents)}
+
+    @staticmethod
+    def _extractive_context(question: str, documents: list[RetrievedChunk]) -> list[RetrievedChunk]:
+        selected = select_local_evidence(
+            question,
+            [EvidenceText(doc.text, doc.product_version) for doc in documents],
+            limit=4,
+        )
+        return [replace(documents[index], text=text) for index, text in selected]
+
+    def _extractive_answer(self, documents: list[RetrievedChunk]) -> dict[str, Any]:
+        evidence_lines = "\n".join(
+            f"- {doc.text.strip()[:420]} [{citation_key(doc)}]" for doc in documents
+        )
+        answer = f"检索到的证据（本地抽取）\n{evidence_lines}"
+        return {"answer": answer, "citations": self._citations(answer, documents)}
+
+    @staticmethod
+    def _citations(answer: str, documents: list[RetrievedChunk]) -> list[dict[str, Any]]:
+        keys = parse_citation_keys(answer)
+        return [
             {
                 "source": doc.source, "doc_id": doc.doc_id, "chunk_id": doc.chunk_id,
                 "citation_key": citation_key(doc),
                 "snippet": doc.text[:280], "page_number": doc.page_number,
             }
-            for doc in state["relevant_documents"]
-            if citation_key(doc) in parse_citation_keys(answer)
+            for doc in documents
+            if citation_key(doc) in keys
         ]
-        return {"answer": answer, "citations": citations}
 
     async def _verify_groundedness(self, state: AgenticRAGState) -> dict[str, Any]:
         valid = {citation_key(doc) for doc in state["relevant_documents"]}
@@ -205,7 +234,8 @@ class LangGraphRAGService:
                 "cited": sorted(cited),
                 "check": "citation_id_integrity_only",
             },
-            "failure_reason": None if grounded else "ungrounded_answer",
+            "failure_reason": None if grounded else state["failure_reason"] or "ungrounded_answer",
+            **({"answer": state["answer"], "citations": state["citations"]} if grounded else {}),
         }
 
     def _after_verify(self, state: AgenticRAGState) -> str:
@@ -255,6 +285,9 @@ class LangGraphRAGService:
                     )
                 if event:
                     safe = {key: value for key, value in values.items() if key not in {"retrieved_documents", "relevant_documents"}}
+                    if node == "generate_answer":
+                        safe.pop("answer", None)
+                        safe.pop("citations", None)
                     if node == "retrieve_documents":
                         safe["count"] = len(values.get("retrieved_documents", []))
                     yield event, safe

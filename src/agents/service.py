@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.agents.cache_policy import is_no_answer_fallback
+from src.infrastructure.llm.local_llm import LOCAL_EXTRACTIVE_MODEL
+from src.rag.evidence import EvidenceText, select_local_evidence
 from src.shared.interfaces.llm import ChatMessage, GenerationConfig, LLM, MessageRole
 from src.shared.interfaces.tool import ToolContext
 from src.tools import ToolRegistry
@@ -60,7 +63,12 @@ class AgentService:
             max_tokens=max_tokens,
             timeout_s=timeout_s,
         )
-        self._system_prompt = system_prompt
+        self._system_prompt = (
+            f"{system_prompt}\nBefore answering, check that the retrieved text explicitly "
+            "supplies each fact requested, including the exact setting, value and applicable "
+            "version when asked. Related instructions alone do not supply a missing fact. "
+            f"If any required fact is missing, reply exactly: '{NO_ANSWER_FALLBACK}'"
+        )
 
     async def run(
         self,
@@ -97,8 +105,9 @@ class AgentService:
             )
 
             if not response.tool_calls:
+                answer = (response.content or "").strip()
                 citations = self._extract_citations(latest_retrieval_payload)
-                if not citations:
+                if not citations or not answer or is_no_answer_fallback(answer, exact=True):
                     return AgentResult(
                         answer=NO_ANSWER_FALLBACK,
                         steps=step,
@@ -107,7 +116,7 @@ class AgentService:
                         citations=[],
                     )
                 return AgentResult(
-                    answer=(response.content or "").strip() or NO_ANSWER_FALLBACK,
+                    answer=answer,
                     steps=step,
                     tools_used=tools_used,
                     status="ok",
@@ -125,6 +134,11 @@ class AgentService:
                     ),
                 )
                 tools_used.append(tool_call.name)
+                payload = (
+                    tool_result.output
+                    if tool_result.success
+                    else {"error": tool_result.error or "Tool execution failed."}
+                )
 
                 if (
                     tool_call.name == "retrieve_context"
@@ -132,12 +146,12 @@ class AgentService:
                     and isinstance(tool_result.output, dict)
                 ):
                     latest_retrieval_payload = tool_result.output
+                    if self._llm.model_name == LOCAL_EXTRACTIVE_MODEL:
+                        latest_retrieval_payload = self._check_local_evidence(
+                            question, latest_retrieval_payload,
+                        )
+                        payload = latest_retrieval_payload
 
-                payload = (
-                    tool_result.output
-                    if tool_result.success
-                    else {"error": tool_result.error or "Tool execution failed."}
-                )
                 messages.append(
                     ChatMessage(
                         role=MessageRole.TOOL,
@@ -154,6 +168,19 @@ class AgentService:
             status="max_steps_reached",
             citations=self._extract_citations(latest_retrieval_payload),
         )
+
+    @staticmethod
+    def _check_local_evidence(question: str, payload: dict[str, Any]) -> dict[str, Any]:
+        raw = payload.get("results", [])
+        results = [
+            item for item in raw if isinstance(item, dict) and item.get("text")
+        ] if isinstance(raw, list) else []
+        selected = select_local_evidence(
+            question,
+            [EvidenceText(str(item["text"]), item.get("product_version")) for item in results],
+            limit=3,
+        )
+        return {**payload, "results": [dict(results[index], text=text) for index, text in selected]}
 
     @staticmethod
     def _extract_citations(

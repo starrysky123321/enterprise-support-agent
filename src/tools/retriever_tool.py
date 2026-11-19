@@ -72,6 +72,7 @@ class RetrieverTool(Tool):
                         "chunk_id": chunk.chunk_id,
                         "source": chunk.source,
                         "text": chunk.text,
+                        "product_version": chunk.product_version,
                         "score": chunk.score,
                         "page_number": chunk.page_number,
                     }

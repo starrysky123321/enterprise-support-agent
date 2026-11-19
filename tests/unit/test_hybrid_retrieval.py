@@ -1,8 +1,12 @@
 import asyncio
+from dataclasses import replace
+
+import pytest
 
 from src.infrastructure.keyword import SQLiteBM25Index
 from src.rag.models import RAGChunk, RetrievedChunk, RetrievalFilter
 from src.rag.retrieval import reciprocal_rank_fusion
+from src.rag.retrieval.error_codes import find_error_code_definition, lookup_error_code
 from src.rag.pipeline import RAGRetrievalService
 from src.infrastructure.llm.local_embeddings import LocalHashEmbeddingProvider
 
@@ -91,3 +95,78 @@ def test_explicit_deny_all_stops_before_any_retrieval_backend():
     ))
 
     assert results == []
+
+
+@pytest.mark.parametrize("with_reranker", [False, True])
+def test_error_code_definition_survives_candidate_cutoff_and_reranking(with_reranker):
+    definition = replace(
+        _retrieved("release-32", "c2", 0.9),
+        text="CFG-3207 indicates the legacy keepalive.enabled key is still present.",
+    )
+    distractors = [
+        replace(
+            _retrieved(f"ticket-{index:02}", "c1", 0.8),
+            text="The team saw CFG-3207 during a rollout and opened a ticket.",
+        )
+        for index in range(12)
+    ]
+
+    class KeywordHits:
+        async def search(self, **kwargs):
+            assert kwargs["query"] == "CFG-3207"
+            return [definition, *distractors]
+
+    class DenseHits:
+        async def similarity_search(self, **kwargs):
+            return distractors
+
+    class DropsDefinition:
+        async def rerank(self, *, query, chunks, top_n):
+            assert chunks[0].doc_id == "release-32"
+            return chunks[1:top_n + 1]
+
+    baseline = reciprocal_rank_fusion(
+        {"bm25": [definition, *distractors], "dense": distractors}, limit=5,
+    )
+    assert definition.doc_id not in {chunk.doc_id for chunk in baseline}
+    service = RAGRetrievalService(
+        embedding_provider=LocalHashEmbeddingProvider(), vector_store=DenseHits(),
+        default_top_k=3, prefetch_k=20, candidate_k=5, keyword_index=KeywordHits(),
+        reranker=DropsDefinition() if with_reranker else None,
+    )
+
+    result = asyncio.run(service.retrieve(query="CFG-3207是什么意思？"))
+
+    assert [chunk.doc_id for chunk in result] == [
+        "release-32", distractors[0].doc_id, distractors[1].doc_id,
+    ]
+    assert result[0].retrieval_sources == ("bm25",)
+    assert result[0].raw_scores == {"bm25": 0.9}
+
+
+@pytest.mark.parametrize("query", ["cfg-3207", "What does `CFG-3207` mean?", "错误码：CFG-3207 是什么意思？"])
+def test_definition_is_exact_and_stays_in_scope(query):
+    allowed = replace(
+        _retrieved("public-manual", "c1", 0.7),
+        text="错误码 CFG-3207 表示旧的保活配置仍然存在。", product_version="3.2",
+    )
+    candidates = [
+        replace(allowed, doc_id="private", text="CFG-3207 means a private diagnostic."),
+        replace(allowed, doc_id="old", product_version="3.1"),
+        replace(allowed, text="CFG-32070 means a different issue."),
+        replace(allowed, text="The operator saw CFG-3207 during an upgrade."),
+        replace(allowed, text="CFG-3207 was returned. Contact the operator."),
+        allowed,
+    ]
+    filters = RetrievalFilter(allowed_doc_ids=("public-manual", "old"), product_version="3.2")
+
+    assert find_error_code_definition(lookup_error_code(query), candidates, filters) is allowed
+
+
+@pytest.mark.parametrize("query", [
+    "How should I diagnose CFG-3207 after an upgrade?",
+    "CFG-3207 和 TLS-3210 是什么意思？",
+])
+def test_no_reservation_for_broader_queries(query):
+    definition = replace(_retrieved("r", "c1", 0.9), text="CFG-3207 means legacy keys are used.")
+    assert find_error_code_definition(lookup_error_code(query), [definition]) is None
