@@ -4,14 +4,15 @@
 按带页码或分块引用的答案回溯证据。Dense 和 BM25 在召回前应用同一权限范围，RRF 合并候选，
 LangGraph 控制检索重试并支持证据不足时拒答。
 
-本项目基于 [mahmoudsamy7729/agentic-rag](https://github.com/mahmoudsamy7729/agentic-rag) 二次开发。来源与许可说明见 [NOTICE](NOTICE)，整体以 [MIT License](LICENSE) 开源。
-
 [故障诊断演示](docs/support-demo.md)涵盖跨文档诊断、同题切换权限和证据不足时拒答。
 [请求链路图](docs/architecture.md)展示权限条件如何进入两路检索。
 
-**本地评测**覆盖 20 份合成资料和 63 道题。使用 BGE 向量模型时，Hybrid RRF 的 Recall@5
-为 98.98%。三个错误码释义查询都把正确分块排在首位，两条问答路径均未返回超范围文档。
-[评测结果、失败案例与复现命令](docs/evaluation.md)
+**本地开发版评测（2026-11-21）**使用 174 份英文合成资料和 357 道题。在 281 道可回答题上，
+Hybrid RRF 的 Recall@5 为 **89.0%**，较 BM25 提升 **9.25 个百分点**。使用本地抽取模型在同一题集上对照时，
+正确拒答率由 **20.3% 升至 100%**，误拒率由 **11.4% 降至 5.7%**。新增 48 道验证题上，正确拒答率为 100%，误拒率为 0%。
+
+扩充题集和本轮拒答改进来自尚未同步到 `main` 的本地开发版。
+[当前公开版本的评测与复现](docs/evaluation.md)
 
 ## 请求链路
 
@@ -146,3 +147,7 @@ bash scripts/audit_dependencies.sh
 - [故障排查](docs/troubleshooting.md)
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)
+
+## 来源与许可
+
+项目采用 [MIT 许可](LICENSE)。上游来源与第三方许可说明见 [NOTICE](NOTICE)。
